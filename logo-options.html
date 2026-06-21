@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>VoicePill — Logo Options</title>
+<style>
+  :root {
+    --accent: #6c5ce7;
+    --accent-2: #a29bfe;
+    --teal: #00d2a8;
+    --bg: #1b1b22;
+    --fg: #e8e8ef;
+    --muted: #9a9aab;
+    --surface: #22222b;
+    --surface-2: #15151b;
+    --border: rgba(255,255,255,0.12);
+    --border-strong: rgba(255,255,255,0.2);
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { background: var(--bg); color: var(--fg); line-height: 1.5; padding-bottom: 110px; }
+
+  .head {
+    position: sticky; top: 0; z-index: 5;
+    background: rgba(27,27,34,.85); backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    padding: 20px 32px;
+  }
+  .head h1 { margin: 0; font-size: 20px; }
+  .head p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+  .wrap { max-width: 1000px; margin: 0 auto; padding: 28px 32px; display: grid; gap: 18px; }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 16px; padding: 20px 22px;
+    display: grid; grid-template-columns: 1fr auto; gap: 20px; align-items: center;
+    transition: border-color .2s ease, box-shadow .2s ease;
+  }
+  .card.picked { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 10px 30px rgba(108,92,231,.22); }
+  .meta { min-width: 0; }
+  .meta-name { display: flex; align-items: center; gap: 10px; font-size: 16px; font-weight: 650; }
+  .meta-name input { width: 18px; height: 18px; accent-color: var(--accent); cursor: pointer; }
+  .meta-desc { color: var(--muted); font-size: 13px; margin: 6px 0 0; max-width: 360px; }
+
+  .previews { display: flex; align-items: center; gap: 16px; }
+  .pv { display: flex; flex-direction: column; align-items: center; gap: 7px; }
+  .pv-cap { font-size: 10px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); }
+
+  /* app-icon tile look: rounded square w/ gradient, matches Windows app icon */
+  .tile { width: 84px; height: 84px; border-radius: 20px; display: grid; place-items: center;
+    box-shadow: 0 8px 22px rgba(0,0,0,.4); }
+  .swatch-dark { width: 64px; height: 64px; border-radius: 14px; display: grid; place-items: center; background: #15151b; border: 1px solid var(--border); }
+  .swatch-light { width: 64px; height: 64px; border-radius: 14px; display: grid; place-items: center; background: #f3f3f7; border: 1px solid rgba(0,0,0,.1); }
+  .fav { width: 28px; height: 28px; border-radius: 7px; display: grid; place-items: center; background: #15151b; border: 1px solid var(--border); }
+  .fav svg, .swatch-dark svg, .swatch-light svg { width: 70%; height: 70%; }
+  .fav svg { width: 80%; height: 80%; }
+  .tile svg { width: 64%; height: 64%; }
+
+  .summary {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 6;
+    background: rgba(21,21,27,.93); backdrop-filter: blur(14px);
+    border-top: 1px solid var(--border-strong);
+    padding: 16px 32px; display: flex; align-items: center; justify-content: space-between; gap: 20px;
+  }
+  .summary b { color: var(--accent-2); }
+  .copy { background: var(--accent); color: #fff; border: none; border-radius: 8px; padding: 11px 20px; font-size: 13px; font-weight: 600; cursor: pointer; }
+  @media (max-width: 720px) { .card { grid-template-columns: 1fr; } .previews { flex-wrap: wrap; } }
+</style>
+</head>
+<body>
+  <div class="head">
+    <h1>VoicePill — Logo Options</h1>
+    <p>Four concepts, each shown as the app-icon tile, the bare mark on dark & light, and at favicon size. Pick one; I'll generate the real PNG/ICO assets and wire them in.</p>
+  </div>
+  <div class="wrap" id="wrap"></div>
+
+  <div class="summary">
+    <div>Picked: <b id="pick">none yet</b></div>
+    <button class="copy" id="copyBtn">Copy my pick</button>
+  </div>
+
+<script>
+let _uid = 0;
+const u = () => "g" + (++_uid);
+
+// Each logo: tile(uid) = white mark on gradient tile; glyph(uid) = gradient mark (works on dark/light).
+const LOGOS = [
+  {
+    id: "capsule-wave",
+    name: "Capsule Wave",
+    desc: "The pill capsule with a voice waveform inside. Most literal to the name — pill + voice in one shape.",
+    grad(id){ return `<linearGradient id="${id}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6c5ce7"/><stop offset="1" stop-color="#a29bfe"/></linearGradient>`; },
+    bars(fill){
+      const hs=[16,28,40,28,16], xs=[36,50,64,78,92];
+      return hs.map((h,i)=>`<rect x="${xs[i]}" y="${64-h/2}" width="6" height="${h}" rx="3" fill="${fill}"/>`).join("");
+    },
+    tile(){ const g=u(); return `<svg viewBox="0 0 128 128"><defs>${this.grad(g)}</defs><rect width="128" height="128" rx="30" fill="url(#${g})"/><rect x="22" y="44" width="84" height="40" rx="20" fill="rgba(255,255,255,.16)"/>${this.bars("#fff")}</svg>`; },
+    glyph(){ const g=u(); return `<svg viewBox="0 0 128 128"><defs>${this.grad(g)}</defs><rect x="18" y="40" width="92" height="48" rx="24" fill="url(#${g})"/>${this.bars("#fff")}</svg>`; },
+  },
+  {
+    id: "mic-capsule",
+    name: "Mic Capsule",
+    desc: "The capsule standing as a studio microphone with pickup arc and stand. Reads instantly as ‘voice input’.",
+    grad(id){ return `<linearGradient id="${id}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#a29bfe"/><stop offset="1" stop-color="#6c5ce7"/></linearGradient>`; },
+    mic(bodyFill, accent){ return `
+      <rect x="48" y="22" width="32" height="56" rx="16" fill="${bodyFill}"/>
+      <path d="M40 60 a24 24 0 0 0 48 0" fill="none" stroke="${accent}" stroke-width="6" stroke-linecap="round"/>
+      <path d="M64 84 v14" fill="none" stroke="${accent}" stroke-width="6" stroke-linecap="round"/>
+      <path d="M50 100 h28" fill="none" stroke="${accent}" stroke-width="6" stroke-linecap="round"/>`; },
+    tile(){ const g=u(); return `<svg viewBox="0 0 128 128"><defs>${this.grad(g)}</defs><rect width="128" height="128" rx="30" fill="url(#${g})"/>${this.mic("rgba(255,255,255,.95)","#00d2a8")}</svg>`; },
+    glyph(){ const g=u(); return `<svg viewBox="0 0 128 128"><defs>${this.grad(g)}</defs>${this.mic(`url(#${g})`,"#00d2a8")}</svg>`; },
+  },
+  {
+    id: "voice-waves",
+    name: "Voice Waves",
+    desc: "A round badge with a speaking dot and emanating sound arcs. Clean, friendly, works tiny in the tray.",
+    grad(id){ return `<linearGradient id="${id}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6c5ce7"/><stop offset="1" stop-color="#a29bfe"/></linearGradient>`; },
+    waves(dot, arc, arc2){ return `
+      <circle cx="48" cy="64" r="8" fill="${dot}"/>
+      <path d="M64 48 a22 22 0 0 1 0 32" fill="none" stroke="${arc}" stroke-width="6" stroke-linecap="round"/>
+      <path d="M76 40 a34 34 0 0 1 0 48" fill="none" stroke="${arc}" stroke-width="6" stroke-linecap="round"/>
+      <path d="M88 33 a46 46 0 0 1 0 62" fill="none" stroke="${arc2}" stroke-width="6" stroke-linecap="round"/>`; },
+    tile(){ const g=u(); return `<svg viewBox="0 0 128 128"><defs>${this.grad(g)}</defs><rect width="128" height="128" rx="30" fill="url(#${g})"/>${this.waves("#fff","rgba(255,255,255,.92)","#00d2a8")}</svg>`; },
+    glyph(){ const g=u(); return `<svg viewBox="0 0 128 128"><defs>${this.grad(g)}</defs><circle cx="64" cy="64" r="46" fill="url(#${g})"/>${this.waves("#fff","rgba(255,255,255,.92)","#00d2a8")}</svg>`; },
+  },
+  {
+    id: "vp-monogram",
+    name: "VP Monogram",
+    desc: "Bold ‘VP’ initials with a waveform underline. Most ‘brand mark’ of the set — distinct at any size.",
+    grad(id){ return `<linearGradient id="${id}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6c5ce7"/><stop offset="1" stop-color="#a29bfe"/></linearGradient>`; },
+    mono(fill, wave){ return `
+      <text x="64" y="78" text-anchor="middle" font-family="'Segoe UI',system-ui,sans-serif" font-weight="800" font-size="60" letter-spacing="-2" fill="${fill}">VP</text>
+      <g fill="${wave}"><rect x="40" y="92" width="5" height="8" rx="2.5"/><rect x="50" y="88" width="5" height="16" rx="2.5"/><rect x="60" y="84" width="5" height="24" rx="2.5"/><rect x="70" y="88" width="5" height="16" rx="2.5"/><rect x="80" y="92" width="5" height="8" rx="2.5"/></g>`; },
+    tile(){ const g=u(); return `<svg viewBox="0 0 128 128"><defs>${this.grad(g)}</defs><rect width="128" height="128" rx="30" fill="url(#${g})"/>${this.mono("#fff","#00d2a8")}</svg>`; },
+    glyph(){ const g=u(); return `<svg viewBox="0 0 128 128"><defs>${this.grad(g)}</defs>${this.mono(`url(#${g})`,"#00d2a8")}</svg>`; },
+  },
+];
+
+const wrap = document.getElementById("wrap");
+let picked = null;
+
+for (const logo of LOGOS) {
+  const card = document.createElement("div");
+  card.className = "card";
+  card.dataset.id = logo.id;
+  card.innerHTML = `
+    <div class="meta">
+      <label class="meta-name"><input type="radio" name="logo" value="${logo.id}"/> ${logo.name}</label>
+      <p class="meta-desc">${logo.desc}</p>
+    </div>
+    <div class="previews">
+      <div class="pv"><div class="tile">${logo.tile()}</div><span class="pv-cap">App icon</span></div>
+      <div class="pv"><div class="swatch-dark">${logo.glyph()}</div><span class="pv-cap">Mark · dark</span></div>
+      <div class="pv"><div class="swatch-light">${logo.glyph()}</div><span class="pv-cap">Mark · light</span></div>
+      <div class="pv"><div class="fav">${logo.glyph()}</div><span class="pv-cap">Tray 28px</span></div>
+    </div>`;
+  const radio = card.querySelector("input");
+  function choose(){
+    picked = logo;
+    document.querySelectorAll(".card").forEach(c => c.classList.toggle("picked", c.dataset.id === logo.id));
+    radio.checked = true;
+    document.getElementById("pick").textContent = logo.name;
+  }
+  card.addEventListener("click", e => { if (e.target.tagName !== "INPUT") choose(); });
+  radio.addEventListener("change", choose);
+  wrap.appendChild(card);
+}
+
+document.getElementById("copyBtn").addEventListener("click", function(){
+  const txt = picked ? `Use the "${picked.name}" logo (${picked.id}) for VoicePill — generate the icon assets and wire it in.` : "(no pick yet)";
+  navigator.clipboard.writeText(txt);
+  this.textContent = picked ? "Copied ✓" : "Pick one first";
+  setTimeout(()=> this.textContent = "Copy my pick", 1400);
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>VoicePill</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body class="pill-body">
+    <div id="pill" class="pill state-idle" title="VoicePill — click to open transcriptions, drag to move">
+      <div class="pill-icon">
+        <span class="mic-dot"></span>
+        <div class="wave">
+          <i></i><i></i><i></i><i></i><i></i>
+        </div>
+        <div class="spinner"></div>
+      </div>
+      <div class="pill-label" id="pill-label">Ready</div>
+    </div>
+    <script type="module" src="/src/pill.ts"></script>
+  </body>
+</html>

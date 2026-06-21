@@ -1,0 +1,12 @@
+# Build-time environment for native deps. Cargo applies `[env]` to every build
+# script and rustc invocation, so this works no matter how cargo is launched
+# (`cargo build`, `tauri dev`, `tauri build`) — unlike a Windows User env var,
+# which Git Bash and some spawned shells don't inherit.
+#
+# - LIBCLANG_PATH: bindgen (used by whisper-rs-sys) needs libclang.dll to parse
+#   the C headers. Path is machine-specific (pip-installed `libclang` wheel).
+# - CUDAARCHS=120: target the RTX 5080 (Blackwell, sm_120) when building the
+#   whisper.cpp CUDA backend.
+[env]
+LIBCLANG_PATH = "C:\\Users\\jawad\\AppData\\Roaming\\Python\\Python314\\site-packages\\clang\\native"
+CUDAARCHS = "120"

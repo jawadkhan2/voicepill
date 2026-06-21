@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>VoicePill — UI Upgrade Picker</title>
+<style>
+  :root {
+    --vp-accent: #6c5ce7;
+    --vp-accent-2: #a29bfe;
+    --vp-listening: #00d2a8;
+    --vp-busy: #ffb454;
+    --vp-error: #ff5c7c;
+    --vp-bg: #1b1b22;
+    --vp-fg: #e8e8ef;
+    --vp-muted: #9a9aab;
+    --vp-surface: #22222b;
+    --vp-surface-2: #15151b;
+    --vp-pill-1: #25252e;
+    --vp-pill-2: #15151b;
+    --vp-border: rgba(255,255,255,0.12);
+    --vp-border-strong: rgba(255,255,255,0.18);
+    --vp-hairline: rgba(255,255,255,0.06);
+    --vp-switch-off: #3a3a46;
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--vp-bg);
+    color: var(--vp-fg);
+    line-height: 1.5;
+    padding-bottom: 120px;
+  }
+
+  /* ---- page chrome ---- */
+  .page-head {
+    position: sticky; top: 0; z-index: 50;
+    background: rgba(27,27,34,0.85);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--vp-hairline);
+    padding: 20px 32px;
+    display: flex; align-items: center; justify-content: space-between; gap: 24px;
+  }
+  .page-head h1 { margin: 0; font-size: 20px; }
+  .page-head p { margin: 4px 0 0; color: var(--vp-muted); font-size: 13px; }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 32px; }
+
+  .group-title {
+    font-size: 12px; text-transform: uppercase; letter-spacing: 1px;
+    color: var(--vp-accent-2); font-weight: 700;
+    margin: 40px 0 14px; padding-bottom: 8px;
+    border-bottom: 1px solid var(--vp-hairline);
+  }
+  .group-title:first-of-type { margin-top: 8px; }
+
+  /* ---- upgrade card ---- */
+  .upg {
+    background: var(--vp-surface);
+    border: 1px solid var(--vp-border);
+    border-radius: 14px;
+    padding: 18px 20px;
+    margin-bottom: 16px;
+    display: grid;
+    grid-template-columns: 28px 1fr;
+    gap: 4px 14px;
+    transition: border-color .2s ease, box-shadow .2s ease;
+  }
+  .upg.picked {
+    border-color: var(--vp-accent);
+    box-shadow: 0 0 0 1px var(--vp-accent), 0 8px 26px rgba(108,92,231,0.22);
+  }
+  .upg-check { grid-row: 1 / span 3; padding-top: 2px; }
+  .upg-check input { width: 20px; height: 20px; accent-color: var(--vp-accent); cursor: pointer; }
+  .upg-name { font-size: 15px; font-weight: 650; display: flex; align-items: center; gap: 10px; }
+  .tag {
+    font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px;
+    padding: 2px 7px; border-radius: 999px;
+  }
+  .tag-easy { background: rgba(0,210,168,.16); color: var(--vp-listening); }
+  .tag-med  { background: rgba(255,180,84,.16); color: var(--vp-busy); }
+  .tag-dep  { background: rgba(255,92,124,.16); color: var(--vp-error); }
+  .upg-desc { color: var(--vp-muted); font-size: 13px; margin: 4px 0 12px; }
+  .demo {
+    background: var(--vp-bg);
+    border: 1px dashed var(--vp-border);
+    border-radius: 10px;
+    padding: 22px;
+    display: flex; flex-wrap: wrap; gap: 28px; align-items: center;
+  }
+  .demo-col { display: flex; flex-direction: column; gap: 8px; align-items: center; }
+  .demo-cap { font-size: 11px; color: var(--vp-muted); text-transform: uppercase; letter-spacing: .5px; }
+
+  /* ===== base components (current look) ===== */
+  .pill {
+    display: inline-flex; align-items: center; gap: 10px;
+    padding: 8px 16px 8px 12px; border-radius: 999px;
+    background: linear-gradient(135deg, var(--vp-pill-1), var(--vp-pill-2));
+    border: 1px solid var(--vp-border);
+    box-shadow: 0 6px 22px rgba(0,0,0,.45);
+    color: var(--vp-fg); cursor: pointer; user-select: none;
+  }
+  .mic-dot { width: 12px; height: 12px; border-radius: 50%; background: var(--vp-accent); }
+  .pill-label { font-size: 13px; font-weight: 600; }
+  .wave { display: inline-flex; gap: 2px; align-items: center; height: 18px; }
+  .wave i { width: 3px; height: 6px; border-radius: 2px; background: var(--vp-listening); animation: wave .9s ease-in-out infinite; }
+  .wave i:nth-child(2){animation-delay:.1s}.wave i:nth-child(3){animation-delay:.2s}
+  .wave i:nth-child(4){animation-delay:.3s}.wave i:nth-child(5){animation-delay:.4s}
+  @keyframes wave { 0%,100%{height:6px} 50%{height:16px} }
+
+  .history-item {
+    background: var(--vp-surface); border: 1px solid var(--vp-border);
+    border-radius: 8px; padding: 14px; width: 320px;
+  }
+  .history-text { margin: 0; font-size: 14px; line-height: 1.45; }
+  .history-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; }
+  .history-time { color: var(--vp-muted); font-size: 12px; }
+  .history-buttons { display: flex; gap: 8px; }
+  .btn { background: var(--vp-accent); color: #fff; border: none; border-radius: 8px; padding: 8px 16px; font-size: 13px; font-weight: 600; cursor: pointer; }
+  .btn-ghost { background: transparent; border: 1px solid var(--vp-border); color: var(--vp-muted); }
+
+  /* ===== #1 pill glass + glow ===== */
+  .pill-glass {
+    background: linear-gradient(135deg, rgba(40,40,52,.7), rgba(21,21,27,.7));
+    backdrop-filter: blur(14px) saturate(1.4);
+    border: 1px solid var(--vp-border-strong);
+    box-shadow: 0 8px 30px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.08);
+    position: relative; overflow: visible;
+  }
+  .pill-glass.listening { border-color: var(--vp-listening); animation: glow 1.8s ease-in-out infinite; }
+  @keyframes glow {
+    0%,100% { box-shadow: 0 8px 30px rgba(0,0,0,.5), 0 0 0 0 rgba(0,210,168,.0); }
+    50% { box-shadow: 0 8px 30px rgba(0,0,0,.5), 0 0 22px 2px rgba(0,210,168,.35); }
+  }
+
+  /* ===== #2 reactive waveform ===== */
+  .wave-live i { animation: walive 1.1s ease-in-out infinite; }
+  .wave-live i:nth-child(1){--h:10px;animation-delay:0s}
+  .wave-live i:nth-child(2){--h:18px;animation-delay:.15s}
+  .wave-live i:nth-child(3){--h:8px;animation-delay:.05s}
+  .wave-live i:nth-child(4){--h:16px;animation-delay:.25s}
+  .wave-live i:nth-child(5){--h:11px;animation-delay:.1s}
+  .wave-live i:nth-child(6){--h:6px;animation-delay:.3s}
+  .wave-live i:nth-child(7){--h:14px;animation-delay:.2s}
+  @keyframes walive { 0%,100%{height:4px} 50%{height:var(--h,14px)} }
+
+  /* ===== #3 card hover lift + accent border + reveal ===== */
+  .card-lift {
+    transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease;
+    border-left: 3px solid transparent;
+  }
+  .card-lift:hover {
+    transform: translateY(-3px);
+    border-color: var(--vp-border-strong);
+    border-left-color: var(--vp-accent);
+    box-shadow: 0 10px 26px rgba(0,0,0,.4);
+  }
+  .card-lift .history-buttons { opacity: .35; transition: opacity .18s ease; }
+  .card-lift:hover .history-buttons { opacity: 1; }
+
+  /* ===== #4 animated copy check ===== */
+  .btn-copy { position: relative; min-width: 78px; }
+  .check-svg { width: 15px; height: 15px; vertical-align: -2px; }
+  .check-svg path { stroke: #fff; stroke-width: 3; fill: none; stroke-linecap: round; stroke-linejoin: round;
+    stroke-dasharray: 24; stroke-dashoffset: 24; }
+  .btn-copy.done { background: var(--vp-listening); }
+  .btn-copy.done .check-svg path { animation: draw .4s ease forwards; }
+  @keyframes draw { to { stroke-dashoffset: 0; } }
+
+  /* ===== #5 relative time + grouping ===== */
+  .day-sep { font-size: 11px; text-transform: uppercase; letter-spacing: .8px; color: var(--vp-muted); margin: 6px 0; font-weight: 700; }
+  .time-rel { color: var(--vp-muted); font-size: 12px; }
+
+  /* ===== #6 search bar ===== */
+  .searchbar { display: flex; align-items: center; gap: 8px; width: 320px;
+    background: var(--vp-surface-2); border: 1px solid var(--vp-border); border-radius: 10px; padding: 8px 12px; }
+  .searchbar input { flex: 1; background: none; border: none; color: var(--vp-fg); font-size: 13px; outline: none; }
+  .searchbar svg { width: 15px; height: 15px; stroke: var(--vp-muted); fill: none; stroke-width: 2; }
+
+  /* ===== #7 empty state ===== */
+  .empty-rich { text-align: center; padding: 28px; width: 320px;
+    background: var(--vp-surface); border: 1px dashed var(--vp-border); border-radius: 12px; }
+  .empty-rich .ring { width: 54px; height: 54px; margin: 0 auto 12px; border-radius: 50%;
+    display: grid; place-items: center; background: rgba(108,92,231,.14); }
+  .empty-rich .ring .mic-dot { width: 18px; height: 18px; }
+  .empty-rich h4 { margin: 0 0 4px; font-size: 14px; }
+  .empty-rich p { margin: 0; font-size: 12px; color: var(--vp-muted); }
+
+  /* ===== #8 settings section icons ===== */
+  .card-title-icon { display: flex; align-items: center; gap: 8px;
+    font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px; color: var(--vp-accent-2); }
+  .card-title-icon svg { width: 16px; height: 16px; stroke: var(--vp-accent-2); fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+  /* ===== #9 toast ===== */
+  .toast { display: inline-flex; align-items: center; gap: 8px;
+    background: var(--vp-surface); border: 1px solid var(--vp-border-strong);
+    border-radius: 10px; padding: 10px 14px; font-size: 13px;
+    box-shadow: 0 10px 30px rgba(0,0,0,.5); animation: toastin 2s ease infinite; }
+  .toast .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--vp-listening); }
+  @keyframes toastin { 0%,100%{transform:translateY(8px);opacity:.5} 20%,80%{transform:translateY(0);opacity:1} }
+
+  /* ===== #10 gradient button ===== */
+  .btn-grad { background: linear-gradient(135deg, var(--vp-accent), var(--vp-accent-2));
+    box-shadow: 0 4px 14px rgba(108,92,231,.4); transition: transform .12s ease, filter .15s ease; }
+  .btn-grad:hover { filter: brightness(1.08); transform: translateY(-1px); }
+  .btn-grad:active { transform: translateY(0); }
+
+  /* ===== #11 skeleton shimmer ===== */
+  .skel { width: 320px; background: var(--vp-surface); border: 1px solid var(--vp-border); border-radius: 8px; padding: 14px; }
+  .skel-line { height: 11px; border-radius: 6px; margin-bottom: 9px;
+    background: linear-gradient(90deg, var(--vp-surface-2) 25%, rgba(255,255,255,.08) 50%, var(--vp-surface-2) 75%);
+    background-size: 200% 100%; animation: shimmer 1.3s linear infinite; }
+  .skel-line.short { width: 55%; }
+  @keyframes shimmer { to { background-position: -200% 0; } }
+
+  /* ===== #12 window rounded + blur header ===== */
+  .win {
+    width: 360px; height: 200px; border-radius: 16px; overflow: hidden;
+    border: 1px solid var(--vp-border-strong); background: var(--vp-bg);
+    box-shadow: 0 20px 50px rgba(0,0,0,.55);
+  }
+  .win-head { padding: 14px 18px; border-bottom: 1px solid var(--vp-hairline);
+    background: rgba(34,34,43,.6); backdrop-filter: blur(10px);
+    display: flex; align-items: center; justify-content: space-between; }
+  .win-head h5 { margin: 0; font-size: 15px; }
+  .win-body { padding: 16px 18px; color: var(--vp-muted); font-size: 13px; }
+
+  /* ---- sticky summary footer ---- */
+  .summary {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 60;
+    background: rgba(21,21,27,.92); backdrop-filter: blur(14px);
+    border-top: 1px solid var(--vp-border-strong);
+    padding: 14px 32px; display: flex; align-items: center; justify-content: space-between; gap: 20px;
+  }
+  .summary-count { font-size: 14px; font-weight: 600; }
+  .summary-count span { color: var(--vp-accent-2); }
+  .summary-list { font-size: 12px; color: var(--vp-muted); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .copy-btn { background: var(--vp-accent); color: #fff; border: none; border-radius: 8px; padding: 10px 18px; font-size: 13px; font-weight: 600; cursor: pointer; }
+  .legend { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
+</style>
+</head>
+<body>
+  <div class="page-head">
+    <div>
+      <h1>VoicePill — UI Upgrade Picker</h1>
+      <p>Tick the ones you want. Live demos below. Copy your picks to me at the bottom — no code changes until you choose.</p>
+    </div>
+    <div class="pill"><span class="mic-dot"></span><span class="pill-label">Ready</span></div>
+  </div>
+
+  <div class="wrap">
+    <p style="color:var(--vp-muted);font-size:13px;margin-top:0;">
+      Tags:
+      <span class="tag tag-easy">easy</span> CSS only ·
+      <span class="tag tag-med">medium</span> CSS + small TS ·
+      <span class="tag tag-dep">needs backend</span> new data from Rust
+    </p>
+
+    <!-- ============ PILL ============ -->
+    <div class="group-title">Floating Pill</div>
+
+    <div class="upg" data-id="pill-glass">
+      <label class="upg-check"><input type="checkbox" /></label>
+      <div class="upg-name">Glassmorphism + listening glow <span class="tag tag-easy">easy</span></div>
+      <div class="upg-desc">Frosted blur background, inner highlight, and a soft pulsing accent glow while listening — feels more alive than the flat gradient.</div>
+      <div class="demo">
+        <div class="demo-col"><span class="demo-cap">now</span>
+          <div class="pill"><span class="mic-dot"></span><span class="pill-label">Ready</span></div></div>
+        <div class="demo-col"><span class="demo-cap">upgrade · idle</span>
+          <div class="pill pill-glass"><span class="mic-dot"></span><span class="pill-label">Ready</span></div></div>
+        <div class="demo-col"><span class="demo-cap">upgrade · listening</span>
+          <div class="pill pill-glass listening"><span class="wave"><i></i><i></i><i></i><i></i><i></i></span><span class="pill-label">Listening…</span></div></div>
+      </div>
+    </div>
+
+    <div class="upg" data-id="wave-live">
+      <label class="upg-check"><input type="checkbox" /></label>
+      <div class="upg-name">Reactive mic waveform <span class="tag tag-dep">needs backend</span></div>
+      <div class="upg-desc">Bars respond to real mic amplitude instead of a fixed loop (more bars, varied heights). Needs the audio thread to emit a level value. Demo shows the richer look.</div>
+      <div class="demo">
+        <div class="demo-col"><span class="demo-cap">now (fixed)</span>
+          <div class="pill"><span class="wave"><i></i><i></i><i></i><i></i><i></i></span><span class="pill-label">Listening…</span></div></div>
+        <div class="demo-col"><span class="demo-cap">upgrade (reactive)</span>
+          <div class="pill"><span class="wave wave-live"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span><span class="pill-label">Listening…</span></div></div>
+      </div>
+    </div>
+
+    <!-- ============ TRANSCRIPTS ============ -->
+    <div class="group-title">Transcript History</div>
+
+    <div class="upg" data-id="card-lift">
+      <label class="upg-check"><input type="checkbox" /></label>
+      <div class="upg-name">Card hover lift + reveal actions <span class="tag tag-easy">easy</span></div>
+      <div class="upg-desc">Card lifts on hover with an accent left edge; Copy/Paste fade in only when you're on the card, reducing visual noise in the list. (Hover the right card.)</div>
+      <div class="demo">
+        <div class="demo-col"><span class="demo-cap">now</span>
+          <article class="history-item">
+            <p class="history-text">Send the report by end of day.</p>
+            <div class="history-actions"><span class="history-time">3:42 PM</span>
+              <div class="history-buttons"><button class="btn">Copy</button><button class="btn btn-ghost">Paste</button></div></div>
+          </article></div>
+        <div class="demo-col"><span class="demo-cap">upgrade · hover me</span>
+          <article class="history-item card-lift">
+            <p class="history-text">Send the report by end of day.</p>
+            <div class="history-actions"><span class="history-time">3:42 PM</span>
+              <div class="history-buttons"><button class="btn">Copy</button><button class="btn btn-ghost">Paste</button></div></div>
+          </article></div>
+      </div>
+    </div>
+
+    <div class="upg" data-id="copy-check">
+      <label class="upg-check"><input type="checkbox" /></label>
+      <div class="upg-name">Animated copy confirmation <span class="tag tag-easy">easy</span></div>
+      <div class="upg-desc">Replaces the "Copied" text swap with a green checkmark that draws itself in. Click the button.</div>
+      <div class="demo">
+        <div class="demo-col"><span class="demo-cap">click it</span>
+          <button class="btn btn-copy" id="copydemo">Copy</button></div>
+      </div>
+    </div>
+
+    <div class="upg" data-id="rel-time">
+      <label class="upg-check"><input type="checkbox" /></label>
+      <div class="upg-name">Relative time + day grouping <span class="tag tag-med">medium</span></div>
+      <div class="upg-desc">"Just now / 4m ago / Yesterday" instead of only a clock time, with Today/Yesterday separators in the list.</div>
+      <div class="demo">
+        <div class="demo-col" style="align-items:stretch">
+          <span class="demo-cap">upgrade</span>
+          <div class="day-sep">Today</div>
+          <article class="history-item" style="width:320px"><p class="history-text">Reschedule the standup to 10am.</p>
+            <div class="history-actions"><span class="time-rel">Just now</span>
+              <div class="history-buttons"><button class="btn">Copy</button><button class="btn btn-ghost">Paste</button></div></div></article>
+          <article class="history-item" style="width:320px;margin-top:10px"><p class="history-text">Buy milk and coffee filters.</p>
+            <div class="history-actions"><span class="time-rel">12m ago</span>
+              <div class="history-buttons"><button class="btn">Copy</button><button class="btn btn-ghost">Paste</button></div></div></article>
+          <div class="day-sep" style="margin-top:12px">Yesterday</div>
+          <article class="history-item" style="width:320px"><p class="history-text">Draft the launch email.</p>
+            <div class="history-actions"><span class="time-rel">Yesterday, 6:10 PM</span>
+              <div class="history-buttons"><button class="btn">Copy</button><button class="btn btn-ghost">Paste</button></div></div></article>
+        </div>
+      </div>
+    </div>
+
+    <div class="upg" data-id="search">
+      <label class="upg-check"><input type="checkbox" /></label>
+      <div class="upg-name">Search / filter bar <span class="tag tag-med">medium</span></div>
+      <div class="upg-desc">Filter the transcript list as you type. Useful once history grows. (Currently capped at ~10 — would pair well with raising that.)</div>
+      <div class="demo">
+        <div class="searchbar">
+          <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+          <input placeholder="Search transcripts…" />
+        </div>
+      </div>
+    </div>
+
+    <div class="upg" data-id="empty">
+      <label class="upg-check"><input type="checkbox" /></label>
+      <div class="upg-name">Richer empty state <span class="tag tag-easy">easy</span></div>
+      <div class="upg-desc">The "No transcriptions yet." box gets an icon and a hint telling the user how to start.</div>
+      <div class="demo">
+        <div class="demo-col"><span class="demo-cap">now</span>
+          <div class="history-item" style="text-align:center;color:var(--vp-muted)">No transcriptions yet.</div></div>
+        <div class="demo-col"><span class="demo-cap">upgrade</span>
+          <div class="empty-rich">
+            <div class="ring"><span class="mic-dot"></span></div>
+            <h4>No transcriptions yet</h4>
+            <p>Hold your trigger key and speak — your text lands here.</p>
+          </div></div>
+      </div>
+    </div>
+
+    <div class="upg" data-id="skeleton">
+      <label class="upg-check"><input type="checkbox" /></label>
+      <div class="upg-name">Skeleton shimmer while loading <span class="tag tag-easy">easy</span></div>
+      <div class="upg-desc">Shimmering placeholder rows during the first fetch / model download instead of a blank gap.</div>
+      <div class="demo">
+        <div class="skel"><div class="skel-line"></div><div class="skel-line"></div><div class="skel-line short"></div></div>
+      </div>
+    </div>
+
+    <!-- ============ SETTINGS ============ -->
+    <div class="group-title">Settings Panel</div>
+
+    <div class="upg" data-id="section-icons">
+      <label class="upg-check"><input type="checkbox" /></label>
+      <div class="upg-name">Section icons <span class="tag tag-easy">easy</span></div>
+      <div class="upg-desc">Small line icons next to each settings section title (Appearance, Trigger, Models…) for faster scanning.</div>
+      <div class="demo" style="gap:18px">
+        <div class="card-title-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>Appearance</div>
+        <div class="card-title-icon"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h0M11 10h0M15 10h0"/></svg>Trigger</div>
+        <div class="card-title-icon"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10"/></svg>Models</div>
+      </div>
+    </div>
+
+    <div class="upg" data-id="btn-grad">
+      <label class="upg-check"><input type="checkbox" /></label>
+      <div class="upg-name">Gradient primary buttons <span class="tag tag-easy">easy</span></div>
+      <div class="upg-desc">Primary buttons get the accent gradient + soft shadow + press feedback. Matches the pill gradient.</div>
+      <div class="demo">
+        <div class="demo-col"><span class="demo-cap">now</span><button class="btn">Download</button></div>
+        <div class="demo-col"><span class="demo-cap">upgrade</span><button class="btn btn-grad">Download</button></div>
+      </div>
+    </div>
+
+    <!-- ============ GLOBAL ============ -->
+    <div class="group-title">Window & Global Polish</div>
+
+    <div class="upg" data-id="window">
+      <label class="upg-check"><input type="checkbox" /></label>
+      <div class="upg-name">Rounded window + blurred header <span class="tag tag-med">medium</span></div>
+      <div class="upg-desc">Rounded window corners and a translucent, blurred header bar that stays readable while content scrolls under it. (Tauri window transparency/rounding.)</div>
+      <div class="demo" style="justify-content:center">
+        <div class="win">
+          <div class="win-head"><h5>VoicePill</h5><span class="mic-dot"></span></div>
+          <div class="win-body">Recent transcriptions appear here. The header floats above with a soft blur.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="upg" data-id="toast">
+      <label class="upg-check"><input type="checkbox" /></label>
+      <div class="upg-name">Toast confirmations <span class="tag tag-med">medium</span></div>
+      <div class="upg-desc">Lightweight toast for actions like "Copied to clipboard" / "Pasted" / "Settings saved" — clearer feedback than silent buttons.</div>
+      <div class="demo">
+        <div class="toast"><span class="dot"></span>Copied to clipboard</div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="summary">
+    <div style="min-width:0;flex:1">
+      <div class="summary-count"><span id="cnt">0</span> selected</div>
+      <div class="summary-list" id="picks">Nothing picked yet.</div>
+    </div>
+    <button class="copy-btn" id="copyPicks">Copy my picks</button>
+  </div>
+
+<script>
+  const NAMES = {
+    "pill-glass":"Glassmorphism + listening glow",
+    "wave-live":"Reactive mic waveform",
+    "card-lift":"Card hover lift + reveal actions",
+    "copy-check":"Animated copy confirmation",
+    "rel-time":"Relative time + day grouping",
+    "search":"Search / filter bar",
+    "empty":"Richer empty state",
+    "skeleton":"Skeleton shimmer while loading",
+    "section-icons":"Settings section icons",
+    "btn-grad":"Gradient primary buttons",
+    "window":"Rounded window + blurred header",
+    "toast":"Toast confirmations",
+  };
+  function refresh() {
+    const picked = [...document.querySelectorAll(".upg")].filter(u => u.querySelector("input").checked);
+    document.getElementById("cnt").textContent = picked.length;
+    document.getElementById("picks").textContent = picked.length
+      ? picked.map(u => NAMES[u.dataset.id]).join(" · ")
+      : "Nothing picked yet.";
+  }
+  document.querySelectorAll(".upg").forEach(u => {
+    const cb = u.querySelector("input");
+    u.addEventListener("click", e => {
+      if (e.target.tagName !== "INPUT" && !e.target.closest("button")) { cb.checked = !cb.checked; }
+      u.classList.toggle("picked", cb.checked);
+      refresh();
+    });
+    cb.addEventListener("change", () => { u.classList.toggle("picked", cb.checked); refresh(); });
+  });
+  document.getElementById("copydemo").addEventListener("click", function(){
+    this.classList.add("done");
+    this.innerHTML = '<svg class="check-svg" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>';
+    setTimeout(()=>{ this.classList.remove("done"); this.textContent = "Copy"; }, 1400);
+  });
+  document.getElementById("copyPicks").addEventListener("click", function(){
+    const picked = [...document.querySelectorAll(".upg")].filter(u => u.querySelector("input").checked).map(u => NAMES[u.dataset.id]);
+    const txt = picked.length ? "Apply these VoicePill UI upgrades:\n- " + picked.join("\n- ") : "(no picks)";
+    navigator.clipboard.writeText(txt);
+    this.textContent = "Copied ✓";
+    setTimeout(()=> this.textContent = "Copy my picks", 1400);
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>VoicePill — neutral icon options</title>
+<style>
+  :root { --accent: #6c5ce7; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: system-ui, "Segoe UI", sans-serif;
+    background: #16161a; color: #e8e8ee; padding: 32px;
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p.sub { margin: 0 0 24px; color: #9a9aa6; font-size: 13px; }
+
+  .accent-bar { display: flex; gap: 10px; align-items: center; margin-bottom: 28px; flex-wrap: wrap; }
+  .accent-bar span { font-size: 12px; color: #9a9aa6; margin-right: 4px; }
+  .swatch {
+    width: 28px; height: 28px; border-radius: 8px; border: 2px solid transparent;
+    cursor: pointer; padding: 0;
+  }
+  .swatch.active { border-color: #fff; }
+
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+  .card {
+    background: #1f1f26; border: 1px solid #2c2c36; border-radius: 14px;
+    padding: 18px; display: flex; flex-direction: column; gap: 14px;
+  }
+  .card h2 { font-size: 14px; margin: 0; }
+  .card .note { font-size: 12px; color: #9a9aa6; margin: -8px 0 0; line-height: 1.4; }
+
+  /* render the same icon on dark + light + on-accent backgrounds */
+  .swatches { display: flex; gap: 12px; }
+  .tile {
+    flex: 1; aspect-ratio: 1; border-radius: 12px; display: flex;
+    align-items: center; justify-content: center;
+  }
+  .tile.dark  { background: #0d0d10; }
+  .tile.light { background: #f4f4f6; }
+  .tile.acc   { background: var(--accent); }
+  .tile svg { width: 64%; height: 64%; }
+
+  /* tray-size preview row (16/24/32 px) */
+  .sizes { display: flex; gap: 16px; align-items: flex-end; padding-top: 4px; }
+  .sizes .s { display: flex; flex-direction: column; align-items: center; gap: 4px; color:#9a9aa6; font-size:11px; }
+  .sizes .s.dark svg, .sizes .s.dark { }
+  .sizes svg { display: block; }
+
+  /* Option B uses currentColor so it can be tinted by accent */
+  .tintable { color: #cfcfd8; }
+  .tile.acc .tintable { color: #ffffff; }
+</style>
+</head>
+<body>
+  <h1>VoicePill — neutral icon options</h1>
+  <p class="sub">Each icon shown on dark / light / accent backgrounds. Click a swatch to change the accent and confirm the neutral marks still pair with it.</p>
+
+  <div class="accent-bar">
+    <span>Accent:</span>
+    <button class="swatch active" style="background:#6c5ce7" data-c="#6c5ce7"></button>
+    <button class="swatch" style="background:#22c55e" data-c="#22c55e"></button>
+    <button class="swatch" style="background:#ef4444" data-c="#ef4444"></button>
+    <button class="swatch" style="background:#3b82f6" data-c="#3b82f6"></button>
+    <button class="swatch" style="background:#f59e0b" data-c="#f59e0b"></button>
+    <button class="swatch" style="background:#ec4899" data-c="#ec4899"></button>
+    <button class="swatch" style="background:#14b8a6" data-c="#14b8a6"></button>
+  </div>
+
+  <div class="grid">
+
+    <!-- Option A -->
+    <div class="card">
+      <h2>A — Graphite pill, light bars</h2>
+      <p class="note">Solid neutral. Crisp at 32px. Best for the baked .ico (desktop/taskbar).</p>
+      <div class="swatches">
+        <div class="tile dark">
+          <svg viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
+            <rect x="18" y="40" width="92" height="48" rx="24" fill="#2E2E38"/>
+            <g fill="#F4F4F6">
+              <rect x="36" y="56" width="6" height="16" rx="3"/>
+              <rect x="50" y="50" width="6" height="28" rx="3"/>
+              <rect x="64" y="44" width="6" height="40" rx="3"/>
+              <rect x="78" y="50" width="6" height="28" rx="3"/>
+              <rect x="92" y="56" width="6" height="16" rx="3"/>
+            </g>
+          </svg>
+        </div>
+        <div class="tile light">
+          <svg viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
+            <rect x="18" y="40" width="92" height="48" rx="24" fill="#2E2E38"/>
+            <g fill="#F4F4F6">
+              <rect x="36" y="56" width="6" height="16" rx="3"/>
+              <rect x="50" y="50" width="6" height="28" rx="3"/>
+              <rect x="64" y="44" width="6" height="40" rx="3"/>
+              <rect x="78" y="50" width="6" height="28" rx="3"/>
+              <rect x="92" y="56" width="6" height="16" rx="3"/>
+            </g>
+          </svg>
+        </div>
+        <div class="tile acc">
+          <svg viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
+            <rect x="18" y="40" width="92" height="48" rx="24" fill="#2E2E38"/>
+            <g fill="#F4F4F6">
+              <rect x="36" y="56" width="6" height="16" rx="3"/>
+              <rect x="50" y="50" width="6" height="28" rx="3"/>
+              <rect x="64" y="44" width="6" height="40" rx="3"/>
+              <rect x="78" y="50" width="6" height="28" rx="3"/>
+              <rect x="92" y="56" width="6" height="16" rx="3"/>
+            </g>
+          </svg>
+        </div>
+      </div>
+      <div class="sizes">
+        <div class="s dark">
+          <svg width="16" height="16" viewBox="0 0 128 128"><rect x="18" y="40" width="92" height="48" rx="24" fill="#2E2E38"/><g fill="#F4F4F6"><rect x="36" y="56" width="6" height="16" rx="3"/><rect x="50" y="50" width="6" height="28" rx="3"/><rect x="64" y="44" width="6" height="40" rx="3"/><rect x="78" y="50" width="6" height="28" rx="3"/><rect x="92" y="56" width="6" height="16" rx="3"/></g></svg>16
+        </div>
+        <div class="s dark">
+          <svg width="24" height="24" viewBox="0 0 128 128"><rect x="18" y="40" width="92" height="48" rx="24" fill="#2E2E38"/><g fill="#F4F4F6"><rect x="36" y="56" width="6" height="16" rx="3"/><rect x="50" y="50" width="6" height="28" rx="3"/><rect x="64" y="44" width="6" height="40" rx="3"/><rect x="78" y="50" width="6" height="28" rx="3"/><rect x="92" y="56" width="6" height="16" rx="3"/></g></svg>24
+        </div>
+        <div class="s dark">
+          <svg width="32" height="32" viewBox="0 0 128 128"><rect x="18" y="40" width="92" height="48" rx="24" fill="#2E2E38"/><g fill="#F4F4F6"><rect x="36" y="56" width="6" height="16" rx="3"/><rect x="50" y="50" width="6" height="28" rx="3"/><rect x="64" y="44" width="6" height="40" rx="3"/><rect x="78" y="50" width="6" height="28" rx="3"/><rect x="92" y="56" width="6" height="16" rx="3"/></g></svg>32
+        </div>
+      </div>
+    </div>
+
+    <!-- Option B -->
+    <div class="card">
+      <h2>B — Outlined pill (tintable)</h2>
+      <p class="note">Uses currentColor. Set color: var(--vp-accent) in-app/tray to follow accent live. Neutral ink for static .ico.</p>
+      <div class="swatches">
+        <div class="tile dark">
+          <svg class="tintable" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round">
+            <rect x="21" y="43" width="86" height="42" rx="21"/>
+            <path d="M39 64v0M53 56v16M67 50v28M81 56v16M95 64v0"/>
+          </svg>
+        </div>
+        <div class="tile light">
+          <svg viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="#3A3A42" stroke-width="6" stroke-linecap="round">
+            <rect x="21" y="43" width="86" height="42" rx="21"/>
+            <path d="M39 64v0M53 56v16M67 50v28M81 56v16M95 64v0"/>
+          </svg>
+        </div>
+        <div class="tile acc">
+          <svg class="tintable" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round">
+            <rect x="21" y="43" width="86" height="42" rx="21"/>
+            <path d="M39 64v0M53 56v16M67 50v28M81 56v16M95 64v0"/>
+          </svg>
+        </div>
+      </div>
+      <div class="sizes">
+        <div class="s dark">
+          <svg class="tintable" width="16" height="16" viewBox="0 0 128 128" fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round"><rect x="21" y="43" width="86" height="42" rx="21"/><path d="M39 64v0M53 56v16M67 50v28M81 56v16M95 64v0"/></svg>16
+        </div>
+        <div class="s dark">
+          <svg class="tintable" width="24" height="24" viewBox="0 0 128 128" fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round"><rect x="21" y="43" width="86" height="42" rx="21"/><path d="M39 64v0M53 56v16M67 50v28M81 56v16M95 64v0"/></svg>24
+        </div>
+        <div class="s dark">
+          <svg class="tintable" width="32" height="32" viewBox="0 0 128 128" fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round"><rect x="21" y="43" width="86" height="42" rx="21"/><path d="M39 64v0M53 56v16M67 50v28M81 56v16M95 64v0"/></svg>32
+        </div>
+      </div>
+    </div>
+
+    <!-- Option C -->
+    <div class="card">
+      <h2>C — Neutral gradient capsule</h2>
+      <p class="note">Subtle depth, still hueless. Closest to your current look minus the purple.</p>
+      <div class="swatches">
+        <div class="tile dark">
+          <svg viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
+            <defs><linearGradient id="gCa" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#52525B"/><stop offset="1" stop-color="#27272E"/></linearGradient></defs>
+            <rect x="18" y="40" width="92" height="48" rx="24" fill="url(#gCa)"/>
+            <g fill="#FAFAFA"><rect x="36" y="56" width="6" height="16" rx="3"/><rect x="50" y="50" width="6" height="28" rx="3"/><rect x="64" y="44" width="6" height="40" rx="3"/><rect x="78" y="50" width="6" height="28" rx="3"/><rect x="92" y="56" width="6" height="16" rx="3"/></g>
+          </svg>
+        </div>
+        <div class="tile light">
+          <svg viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
+            <defs><linearGradient id="gCb" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#52525B"/><stop offset="1" stop-color="#27272E"/></linearGradient></defs>
+            <rect x="18" y="40" width="92" height="48" rx="24" fill="url(#gCb)"/>
+            <g fill="#FAFAFA"><rect x="36" y="56" width="6" height="16" rx="3"/><rect x="50" y="50" width="6" height="28" rx="3"/><rect x="64" y="44" width="6" height="40" rx="3"/><rect x="78" y="50" width="6" height="28" rx="3"/><rect x="92" y="56" width="6" height="16" rx="3"/></g>
+          </svg>
+        </div>
+        <div class="tile acc">
+          <svg viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
+            <defs><linearGradient id="gCc" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#52525B"/><stop offset="1" stop-color="#27272E"/></linearGradient></defs>
+            <rect x="18" y="40" width="92" height="48" rx="24" fill="url(#gCc)"/>
+            <g fill="#FAFAFA"><rect x="36" y="56" width="6" height="16" rx="3"/><rect x="50" y="50" width="6" height="28" rx="3"/><rect x="64" y="44" width="6" height="40" rx="3"/><rect x="78" y="50" width="6" height="28" rx="3"/><rect x="92" y="56" width="6" height="16" rx="3"/></g>
+          </svg>
+        </div>
+      </div>
+      <div class="sizes">
+        <div class="s dark">
+          <svg width="16" height="16" viewBox="0 0 128 128"><defs><linearGradient id="gCd" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#52525B"/><stop offset="1" stop-color="#27272E"/></linearGradient></defs><rect x="18" y="40" width="92" height="48" rx="24" fill="url(#gCd)"/><g fill="#FAFAFA"><rect x="36" y="56" width="6" height="16" rx="3"/><rect x="50" y="50" width="6" height="28" rx="3"/><rect x="64" y="44" width="6" height="40" rx="3"/><rect x="78" y="50" width="6" height="28" rx="3"/><rect x="92" y="56" width="6" height="16" rx="3"/></g></svg>16
+        </div>
+        <div class="s dark">
+          <svg width="24" height="24" viewBox="0 0 128 128"><defs><linearGradient id="gCe" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#52525B"/><stop offset="1" stop-color="#27272E"/></linearGradient></defs><rect x="18" y="40" width="92" height="48" rx="24" fill="url(#gCe)"/><g fill="#FAFAFA"><rect x="36" y="56" width="6" height="16" rx="3"/><rect x="50" y="50" width="6" height="28" rx="3"/><rect x="64" y="44" width="6" height="40" rx="3"/><rect x="78" y="50" width="6" height="28" rx="3"/><rect x="92" y="56" width="6" height="16" rx="3"/></g></svg>24
+        </div>
+        <div class="s dark">
+          <svg width="32" height="32" viewBox="0 0 128 128"><defs><linearGradient id="gCf" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#52525B"/><stop offset="1" stop-color="#27272E"/></linearGradient></defs><rect x="18" y="40" width="92" height="48" rx="24" fill="url(#gCf)"/><g fill="#FAFAFA"><rect x="36" y="56" width="6" height="16" rx="3"/><rect x="50" y="50" width="6" height="28" rx="3"/><rect x="64" y="44" width="6" height="40" rx="3"/><rect x="78" y="50" width="6" height="28" rx="3"/><rect x="92" y="56" width="6" height="16" rx="3"/></g></svg>32
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    const swatches = document.querySelectorAll(".swatch");
+    swatches.forEach(b => b.addEventListener("click", () => {
+      document.documentElement.style.setProperty("--accent", b.dataset.c);
+      swatches.forEach(s => s.classList.remove("active"));
+      b.classList.add("active");
+    }));
+  </script>
+</body>
+</html>

@@ -1,0 +1,64 @@
+[package]
+name = "voicepill"
+version = "0.1.0"
+description = "Local voice transcription pill"
+authors = ["VoicePill"]
+edition = "2021"
+
+# The library target lets `main.rs` stay tiny and keeps the door open for
+# integration tests / future mobile targets.
+[lib]
+name = "voicepill_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-autostart = "2"
+# Over-the-air updates: poll a signed latest.json on GitHub Releases, download
+# the new NSIS installer, verify its signature, install, and relaunch.
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Global mouse/keyboard hook — needed for mouse side-buttons the Tauri
+# global-shortcut plugin can't see. Runs its own listener thread.
+rdev = "0.5"
+# Audio capture + resampling to Whisper's required 16 kHz mono.
+cpal = "0.15"
+rubato = "0.15"
+# Local transcription on the GPU (whisper.cpp). CUDA feature targets the RTX 5080.
+whisper-rs = { version = "0.16", features = ["cuda"] }
+# Model downloads from Hugging Face (rustls to avoid an OpenSSL dependency).
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+# Text injection: set the clipboard (arboard) and synthesize Ctrl+V (enigo).
+arboard = "3"
+enigo = "0.6"
+# Live GPU/VRAM stats via NVIDIA NVML (nvml.dll ships with the driver). Lets the
+# UI confirm the CUDA device and show how much VRAM the loaded model occupies.
+nvml-wrapper = "0.12"
+
+# Logitech HID++ 2.0 client — the MX Master 3 gesture button emits no HID report
+# on a bare mouse (no Options+/Solaar), so the low-level hook (rdev/WH_MOUSE_LL)
+# and Raw Input can't see it. We talk HID++ over the vendor channel to divert the
+# control to software. Version matches the `windows` crate Tauri resolves (0.61).
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_UI_Input",
+    "Win32_Devices_HumanInterfaceDevice",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true
