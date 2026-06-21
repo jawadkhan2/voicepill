@@ -25,7 +25,8 @@
   Create the GitHub release as a draft (won't become "latest" until published).
 
 .PREREQUISITES
-  - Env var VOICEPILL_SIGN_PW = the updater key password.
+  - Updater key password: env var VOICEPILL_SIGN_PW, OR a file at
+    $HOME/.tauri/voicepill_updater.pw (env var wins if both present).
   - Updater private key at $HOME/.tauri/voicepill_updater.key.
   - gh CLI authenticated; CUDA build env wired via src-tauri/.cargo/config.toml.
 #>
@@ -45,10 +46,16 @@ $confPath  = Join-Path $root "src-tauri/tauri.conf.json"
 $cargoPath = Join-Path $root "src-tauri/Cargo.toml"
 $pkgPath   = Join-Path $root "package.json"
 $keyPath   = Join-Path $HOME ".tauri/voicepill_updater.key"
+$pwPath    = Join-Path $HOME ".tauri/voicepill_updater.pw"
 
 # ---- Preconditions --------------------------------------------------------
-if (-not $env:VOICEPILL_SIGN_PW) {
-  throw "Set `$env:VOICEPILL_SIGN_PW to the updater key password before running."
+# Password: env var wins; else fall back to the on-disk .pw file.
+$signPw = $env:VOICEPILL_SIGN_PW
+if (-not $signPw -and (Test-Path $pwPath)) {
+  $signPw = (Get-Content $pwPath -Raw).Trim()
+}
+if (-not $signPw) {
+  throw "No key password: set `$env:VOICEPILL_SIGN_PW or create $pwPath"
 }
 if (-not (Test-Path $keyPath)) {
   throw "Updater private key not found at $keyPath"
@@ -87,7 +94,7 @@ if ($conf.version -ne $Version) {
 
 # ---- Build (signed) -------------------------------------------------------
 $env:TAURI_SIGNING_PRIVATE_KEY = $keyPath
-$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = $env:VOICEPILL_SIGN_PW
+$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = $signPw
 
 Write-Host "Building signed installer…" -ForegroundColor Cyan
 Push-Location $root
