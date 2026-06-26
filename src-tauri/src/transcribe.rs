@@ -1,9 +1,10 @@
 //! Whisper transcription via `whisper-rs` (whisper.cpp bindings).
 //!
-//! Built with the `cuda` feature so the RTX 5080 does the work. The model is
-//! loaded lazily and cached: reloading a multi-GB model per utterance would be
-//! far too slow, so we keep the `WhisperContext` alive and only reload when the
-//! selected model id changes.
+//! Built with a native GPU backend where available: CUDA on Windows/NVIDIA and
+//! Metal on macOS/Apple Silicon. The model is loaded lazily and cached:
+//! reloading a multi-GB model per utterance would be far too slow, so we keep
+//! the `WhisperContext` alive and only reload when the selected model id
+//! changes.
 
 use std::path::PathBuf;
 
@@ -48,7 +49,7 @@ impl Transcriber {
         let path_str = path.to_str().ok_or("model path is not valid UTF-8")?;
 
         let mut params = WhisperContextParameters::default();
-        params.use_gpu(true);
+        params.use_gpu(should_use_gpu());
         let ctx = WhisperContext::new_with_params(path_str, params)
             .map_err(|e| format!("failed to load model '{id}': {e}"))?;
 
@@ -103,4 +104,8 @@ impl Transcriber {
         }
         Ok(text.trim().to_string())
     }
+}
+
+fn should_use_gpu() -> bool {
+    cfg!(any(windows, target_os = "macos"))
 }

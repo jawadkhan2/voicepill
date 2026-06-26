@@ -45,6 +45,7 @@ $root      = Split-Path -Parent $PSScriptRoot
 $confPath  = Join-Path $root "src-tauri/tauri.conf.json"
 $cargoPath = Join-Path $root "src-tauri/Cargo.toml"
 $pkgPath   = Join-Path $root "package.json"
+$lockPath  = Join-Path $root "package-lock.json"
 $keyPath   = Join-Path $HOME ".tauri/voicepill_updater.key"
 $pwPath    = Join-Path $HOME ".tauri/voicepill_updater.pw"
 
@@ -87,18 +88,37 @@ if ($conf.version -ne $Version) {
   Set-Content $cargoPath $cargo
 
   # package.json
-  $pkg = Get-Content $pkgPath -Raw | ConvertFrom-Json
-  $pkg.version = $Version
-  ($pkg | ConvertTo-Json -Depth 32) | Set-Content $pkgPath
+  (Get-Content $pkgPath -Raw) `
+    -replace '("version"\s*:\s*")[^"]+(")', "`${1}$Version`${2}" |
+    Set-Content $pkgPath -NoNewline
+  Add-Content $pkgPath ""  # keep trailing newline
+
+  if (Test-Path $lockPath) {
+    $lock = Get-Content $lockPath -Raw | ConvertFrom-Json
+    $lock.version = $Version
+    if ($lock.packages -and $lock.packages.PSObject.Properties.Name -contains "") {
+      $lock.packages.PSObject.Properties[""].Value.version = $Version
+    }
+    ($lock | ConvertTo-Json -Depth 100) | Set-Content $lockPath
+  }
 }
 
 # ---- Build (signed) -------------------------------------------------------
 $env:TAURI_SIGNING_PRIVATE_KEY = $keyPath
 $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = $signPw
 
-Write-Host "Building signed installer…" -ForegroundColor Cyan
+Write-Host "Building signed installer..." -ForegroundColor Cyan
 Push-Location $root
 try {
+  Write-Host "Refreshing native Whisper/CUDA build cache..." -ForegroundColor Cyan
+  Push-Location (Join-Path $root "src-tauri")
+  try {
+    cargo clean -p whisper-rs-sys
+    if ($LASTEXITCODE -ne 0) { throw "cargo clean failed (exit $LASTEXITCODE)" }
+  } finally {
+    Pop-Location
+  }
+
   npm run tauri build
   if ($LASTEXITCODE -ne 0) { throw "tauri build failed (exit $LASTEXITCODE)" }
 } finally {
@@ -136,12 +156,19 @@ $tag = "v$Version"
 $draftFlag = if ($Draft) { @("--draft") } else { @() }
 
 # If the release/tag already exists, upload (clobber) assets; else create it.
-gh release view $tag --repo $repo > $null 2>&1
-if ($LASTEXITCODE -eq 0) {
-  Write-Host "Release $tag exists — uploading assets (clobber)…" -ForegroundColor Yellow
+$releaseExists = $false
+try {
+  gh release view $tag --repo $repo *> $null
+  $releaseExists = ($LASTEXITCODE -eq 0)
+} catch {
+  $releaseExists = $false
+}
+
+if ($releaseExists) {
+  Write-Host "Release $tag exists - uploading assets (clobber)..." -ForegroundColor Yellow
   gh release upload $tag $installer.FullName $manifestPath --repo $repo --clobber
 } else {
-  Write-Host "Creating release $tag…" -ForegroundColor Cyan
+  Write-Host "Creating release $tag..." -ForegroundColor Cyan
   gh release create $tag $installer.FullName $manifestPath `
     --repo $repo --title "VoicePill $tag" --notes $Notes @draftFlag
 }

@@ -636,26 +636,6 @@ function appearanceSection(): HTMLElement {
   }
   s.appendChild(row("Theme", seg, "Light, dark, or follow your system"));
 
-  // Accent color — native picker with a hex readout
-  const colorWrap = document.createElement("div");
-  colorWrap.className = "color-wrap";
-  const color = document.createElement("input");
-  color.type = "color";
-  color.className = "color-input";
-  color.value = settings.accent;
-  const hex = document.createElement("span");
-  hex.className = "color-hex";
-  hex.textContent = settings.accent;
-  color.oninput = () => {
-    settings.accent = color.value;
-    hex.textContent = color.value;
-    previewAppearance();
-  };
-  color.onchange = () => void persist();
-  colorWrap.appendChild(color);
-  colorWrap.appendChild(hex);
-  s.appendChild(row("Accent color", colorWrap, "Buttons, toggles, and the pill dot"));
-
   // Pill size
   s.appendChild(
     row(

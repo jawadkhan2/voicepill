@@ -27,30 +27,13 @@ function resolveTheme(theme: Theme): "light" | "dark" {
   return theme;
 }
 
-/** Mix a #rrggbb color toward white by `amt` (0–1) to derive a lighter shade. */
-function lighten(hex: string, amt: number): string {
-  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
-  if (!m) return hex;
-  const n = parseInt(m[1], 16);
-  const r = (n >> 16) & 0xff;
-  const g = (n >> 8) & 0xff;
-  const b = n & 0xff;
-  const mix = (c: number) => Math.round(c + (255 - c) * amt);
-  const to2 = (c: number) => c.toString(16).padStart(2, "0");
-  return `#${to2(mix(r))}${to2(mix(g))}${to2(mix(b))}`;
-}
-
 /**
  * Apply appearance settings to the current window. Pass `isPill` so only the
  * pill window touches pill-specific styling and resizes itself.
  */
 export function applyAppearance(a: Appearance, isPill: boolean): void {
-  // Theme + accent affect every window.
+  // Theme is the only color choice; the red accent is fixed in CSS.
   root.dataset.theme = resolveTheme(a.theme);
-  root.style.setProperty("--vp-accent", a.accent);
-  root.style.setProperty("--vp-accent-2", lighten(a.accent, 0.4));
-  // Listening waveform/indicator follows the accent instead of a fixed green.
-  root.style.setProperty("--vp-listening", a.accent);
 
   if (!isPill) return;
 

@@ -102,6 +102,27 @@ pub fn run() {
                 }
             }
 
+            #[cfg(windows)]
+            {
+                // Keep the pill genuinely topmost. The `alwaysOnTop` config flag only
+                // sets the WS_EX_TOPMOST style bit once; Windows leaves that bit set
+                // even after another topmost window (a fullscreen video, another
+                // always-on-top tool) covers the pill, so re-calling
+                // set_always_on_top(true) is a no-op and the pill stays buried.
+                // Toggling false->true forces a SetWindowPos re-insert at the top of
+                // the topmost band. Tauri uses SWP_NOACTIVATE, so focus isn't stolen.
+                let topmost_handle = handle.clone();
+                std::thread::spawn(move || loop {
+                    std::thread::sleep(std::time::Duration::from_secs(1));
+                    if let Some(w) = topmost_handle.get_webview_window("pill") {
+                        if w.is_visible().unwrap_or(false) {
+                            let _ = w.set_always_on_top(false);
+                            let _ = w.set_always_on_top(true);
+                        }
+                    }
+                });
+            }
+
             // Warm the selected model into VRAM at startup so the first
             // transcription isn't stalled by a multi-GB load. The pill shows a
             // "Loading model…" state while this runs.

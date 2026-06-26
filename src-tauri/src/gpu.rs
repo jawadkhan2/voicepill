@@ -1,5 +1,6 @@
-//! Live GPU / VRAM stats via NVIDIA NVML.
+//! Live GPU / VRAM stats.
 //!
+//! On Windows this uses NVIDIA NVML.
 //! `nvml.dll` ships with the NVIDIA driver, so `Nvml::init()` loads it at runtime
 //! — no CUDA toolkit needed just to *read* stats. We use this purely for UI
 //! feedback: confirm the CUDA device exists and show how much VRAM is in use
@@ -7,16 +8,22 @@
 //! VRAM jump when a model loads is the clearest proof the GPU is actually doing
 //! the work.
 
-use std::sync::OnceLock;
-
-use nvml_wrapper::enums::device::UsedGpuMemory;
-use nvml_wrapper::Nvml;
 use serde::Serialize;
 
 /// NVML handle, initialized once. `None` if the lib/driver is unavailable (e.g.
 /// no NVIDIA GPU) — the UI just hides the panel in that case.
+#[cfg(windows)]
+use std::sync::OnceLock;
+
+#[cfg(windows)]
+use nvml_wrapper::enums::device::UsedGpuMemory;
+#[cfg(windows)]
+use nvml_wrapper::Nvml;
+
+#[cfg(windows)]
 static NVML: OnceLock<Option<Nvml>> = OnceLock::new();
 
+#[cfg(windows)]
 fn nvml() -> Option<&'static Nvml> {
     NVML.get_or_init(|| match Nvml::init() {
         Ok(n) => Some(n),
@@ -43,6 +50,7 @@ pub struct GpuInfo {
 }
 
 /// Read current GPU stats for device 0. Cheap enough to poll once a second.
+#[cfg(windows)]
 pub fn info() -> GpuInfo {
     let Some(nvml) = nvml() else {
         return GpuInfo::default();
@@ -82,4 +90,11 @@ pub fn info() -> GpuInfo {
         vram_used_mb: used / 1_048_576,
         vram_process_mb: process_bytes / 1_048_576,
     }
+}
+
+/// Apple Silicon uses Metal/unified memory through whisper.cpp, but this UI
+/// panel is currently NVIDIA/NVML-specific. Hide it on macOS for now.
+#[cfg(not(windows))]
+pub fn info() -> GpuInfo {
+    GpuInfo::default()
 }

@@ -1,9 +1,10 @@
 //! Inject transcribed text into whatever field currently has focus.
 //!
 //! Per the user's choice we paste rather than type: stash the current clipboard,
-//! set our text, synthesize Ctrl+V, then (optionally) restore the old clipboard.
-//! Pasting is instant regardless of length and preserves Unicode, where
-//! synthesizing each keystroke would be slow and locale-dependent.
+//! set our text, synthesize the platform paste shortcut, then (optionally)
+//! restore the old clipboard. Pasting is instant regardless of length and
+//! preserves Unicode, where synthesizing each keystroke would be slow and
+//! locale-dependent.
 
 use std::time::Duration;
 
@@ -70,13 +71,12 @@ pub fn paste_text(text: &str, restore_clipboard: bool) -> Result<(), String> {
     std::thread::sleep(Duration::from_millis(40));
 
     let mut enigo = Enigo::new(&Settings::default()).map_err(|e| e.to_string())?;
-    enigo.key(Key::Control, Press).map_err(|e| e.to_string())?;
+    let modifier = paste_modifier();
+    enigo.key(modifier, Press).map_err(|e| e.to_string())?;
     enigo
         .key(Key::Unicode('v'), Click)
         .map_err(|e| e.to_string())?;
-    enigo
-        .key(Key::Control, Release)
-        .map_err(|e| e.to_string())?;
+    enigo.key(modifier, Release).map_err(|e| e.to_string())?;
 
     if let Some(prev) = previous {
         // Wait for the target app to actually read the clipboard before we
@@ -86,4 +86,14 @@ pub fn paste_text(text: &str, restore_clipboard: bool) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn paste_modifier() -> Key {
+    Key::Meta
+}
+
+#[cfg(not(target_os = "macos"))]
+fn paste_modifier() -> Key {
+    Key::Control
 }

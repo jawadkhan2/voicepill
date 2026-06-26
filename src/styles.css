@@ -1,21 +1,26 @@
 :root {
-  /* Accent (--vp-accent / --vp-accent-2 are overridden at runtime from settings) */
-  --vp-accent: #6c5ce7;
-  --vp-accent-2: #a29bfe;
-  --vp-listening: #00d2a8;
+  /* The single accent: classic mic red. Identical in light and dark so the
+     brand color never shifts between themes. No per-user accent anymore. */
+  --vp-accent: #f5252b;
+  --vp-accent-2: #f5252b;
+  --vp-listening: #f5252b;
   --vp-busy: #ffb454;
   --vp-error: #ff5c7c;
+  /* Red, broken out for glows/tints (rgba so it composites over any surface). */
+  --vp-red-rgb: 245, 37, 43;
 
-  /* Theme surfaces — dark is the default; [data-theme="light"] overrides below. */
-  --vp-bg: #1b1b22;
-  --vp-fg: #e8e8ef;
-  --vp-muted: #9a9aab;
-  --vp-surface: #22222b; /* cards */
-  --vp-surface-2: #15151b; /* inset inputs, badges, segments, bars */
-  --vp-pill-1: #25252e; /* pill gradient top */
-  --vp-pill-2: #15151b; /* pill gradient bottom */
-  --vp-border: rgba(255, 255, 255, 0.12);
-  --vp-border-strong: rgba(255, 255, 255, 0.18);
+  /* Theme surfaces — dark is the default; [data-theme="light"] overrides below.
+     Neutral greys only; red is the lone color so the app reads as one piece. */
+  --vp-bg: #17171c;
+  --vp-fg: #ececf1;
+  --vp-muted: #9494a3;
+  --vp-surface: #202028; /* cards */
+  --vp-surface-2: #2a2a34; /* inset inputs, badges, segments, secondary buttons */
+  --vp-surface-3: #34343f; /* hover on raised surfaces */
+  --vp-pill-1: #252530; /* pill gradient top */
+  --vp-pill-2: #17171c; /* pill gradient bottom */
+  --vp-border: rgba(255, 255, 255, 0.1);
+  --vp-border-strong: rgba(255, 255, 255, 0.16);
   --vp-hairline: rgba(255, 255, 255, 0.06);
   --vp-switch-off: #3a3a46;
 
@@ -27,15 +32,16 @@
 }
 
 :root[data-theme="light"] {
-  --vp-bg: #f3f3f7;
-  --vp-fg: #1c1c24;
-  --vp-muted: #6a6a7a;
+  --vp-bg: #f4f4f7;
+  --vp-fg: #1b1b22;
+  --vp-muted: #6c6c7a;
   --vp-surface: #ffffff;
-  --vp-surface-2: #ececf2;
+  --vp-surface-2: #ececf1;
+  --vp-surface-3: #e1e1e9;
   --vp-pill-1: #ffffff;
   --vp-pill-2: #e9e9f1;
   --vp-border: rgba(0, 0, 0, 0.12);
-  --vp-border-strong: rgba(0, 0, 0, 0.24);
+  --vp-border-strong: rgba(0, 0, 0, 0.2);
   --vp-hairline: rgba(0, 0, 0, 0.07);
   --vp-switch-off: #c7c7d2;
 }
@@ -115,7 +121,6 @@ body {
   height: 12px;
   border-radius: 50%;
   background: var(--vp-accent);
-  box-shadow: 0 0 0 0 rgba(108, 92, 231, 0.6);
 }
 
 .pill-label {
@@ -158,9 +163,23 @@ body {
 }
 
 /* --- state switches --- */
-.state-idle .mic-dot { display: block; }
+/* Idle "Ready": the red dot breathes — a soft pulsing glow, like a mic
+   standby light. */
+.state-idle .mic-dot {
+  display: block;
+  animation: ready-pulse 2.4s ease-in-out infinite;
+}
 .state-idle .wave,
 .state-idle .spinner { display: none; }
+
+@keyframes ready-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(var(--vp-red-rgb), 0.5), 0 0 5px 1px rgba(var(--vp-red-rgb), 0.35);
+  }
+  50% {
+    box-shadow: 0 0 0 5px rgba(var(--vp-red-rgb), 0), 0 0 10px 2px rgba(var(--vp-red-rgb), 0.6);
+  }
+}
 
 .state-listening .mic-dot { display: none; }
 .state-listening .wave { display: flex; }
@@ -172,10 +191,10 @@ body {
 
 @keyframes pill-glow {
   0%, 100% {
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 0 0 0 rgba(0, 210, 168, 0);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 0 0 0 rgba(var(--vp-red-rgb), 0);
   }
   50% {
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 0 22px 2px rgba(0, 210, 168, 0.4);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 0 22px 2px rgba(var(--vp-red-rgb), 0.45);
   }
 }
 
@@ -240,7 +259,7 @@ body {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.6px;
-  color: var(--vp-accent-2);
+  color: var(--vp-muted);
   margin: 14px 0 6px;
 }
 .card-title svg {
@@ -248,7 +267,7 @@ body {
   height: 16px;
   flex: 0 0 auto;
   fill: none;
-  stroke: var(--vp-accent-2);
+  stroke: var(--vp-muted);
   stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
@@ -283,25 +302,24 @@ body {
   font-size: 13px;
 }
 
-/* Buttons */
+/* Buttons — "ink" primary: the foreground color inverted onto the background.
+   Flat, no gradient, no glow; the only color in the app is the red accent. */
 .btn {
-  background: linear-gradient(135deg, var(--vp-accent), var(--vp-accent-2));
-  color: #fff;
-  border: none;
-  border-radius: 8px;
-  padding: 8px 16px;
+  background: var(--vp-fg);
+  color: var(--vp-bg);
+  border: 1px solid transparent;
+  border-radius: 9px;
+  padding: 9px 16px;
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
-  box-shadow: 0 4px 14px color-mix(in srgb, var(--vp-accent) 40%, transparent);
-  transition: filter 0.15s ease, transform 0.12s ease, box-shadow 0.15s ease;
+  transition: background 0.14s ease, border-color 0.14s ease, color 0.14s ease, transform 0.1s ease;
 }
 .btn:hover {
-  filter: brightness(1.08);
-  transform: translateY(-1px);
+  background: color-mix(in srgb, var(--vp-fg) 86%, var(--vp-muted));
 }
 .btn:active {
-  transform: translateY(0);
+  transform: translateY(1px);
 }
 
 /* Key/trigger badge */
@@ -472,16 +490,15 @@ body {
   transform: translateX(20px);
 }
 
-/* Buttons — ghost variant */
+/* Buttons — secondary "chip": a quiet raised neutral. Used for Paste, Delete,
+   and any non-primary action. Clear border so it never reads as disabled. */
 .btn-ghost {
-  background: transparent;
+  background: var(--vp-surface-2);
   border: 1px solid var(--vp-border);
-  color: var(--vp-muted);
-  box-shadow: none;
+  color: var(--vp-fg);
 }
 .btn-ghost:hover {
-  filter: none;
-  transform: none;
+  background: var(--vp-surface-3);
   border-color: var(--vp-border-strong);
   color: var(--vp-fg);
 }
@@ -834,6 +851,7 @@ body {
     transition: none;
   }
   .state-listening .pill,
+  .state-idle .mic-dot,
   .skel-line,
   .btn.copied .check-svg path {
     animation: none;

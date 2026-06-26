@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>VoicePill records microphone audio only while you trigger transcription.</string>
+  <key>NSInputMonitoringUsageDescription</key>
+  <string>VoicePill watches your chosen keyboard or mouse trigger to start and stop transcription.</string>
+  <key>NSAppleEventsUsageDescription</key>
+  <string>VoicePill may need permission to paste transcribed text into the active app.</string>
+</dict>
+</plist>

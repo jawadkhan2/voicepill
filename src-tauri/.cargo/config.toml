@@ -3,10 +3,15 @@
 # (`cargo build`, `tauri dev`, `tauri build`) — unlike a Windows User env var,
 # which Git Bash and some spawned shells don't inherit.
 #
-# - LIBCLANG_PATH: bindgen (used by whisper-rs-sys) needs libclang.dll to parse
-#   the C headers. Path is machine-specific (pip-installed `libclang` wheel).
-# - CUDAARCHS=120: target the RTX 5080 (Blackwell, sm_120) when building the
-#   whisper.cpp CUDA backend.
+# - WHISPER_DONT_GENERATE_BINDINGS: use whisper-rs-sys' bundled bindings so
+#   builds do not inherit a machine-specific libclang path.
+# - GGML_NATIVE=OFF: keep release builds portable across CPUs instead of tuning
+#   native code for only this build machine.
+# - CMAKE_CUDA_ARCHITECTURES: when the Windows CUDA backend is active, build
+#   kernels for distributable NVIDIA generations instead of only the GPU
+#   attached to this machine. RTX 2070 is Turing/sm_75; RTX 30xx is sm_86;
+#   RTX 40xx is sm_89; RTX 50xx is sm_120/121.
 [env]
-LIBCLANG_PATH = "C:\\Users\\jawad\\AppData\\Roaming\\Python\\Python314\\site-packages\\clang\\native"
-CUDAARCHS = "120"
+WHISPER_DONT_GENERATE_BINDINGS = "1"
+GGML_NATIVE = "OFF"
+CMAKE_CUDA_ARCHITECTURES = "75-virtual;80-virtual;86-real;89-real;120a-real;121a-real"

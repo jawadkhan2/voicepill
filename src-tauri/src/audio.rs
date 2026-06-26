@@ -56,7 +56,14 @@ struct Active {
     in_rate: u32,
     /// The device name we built this stream for, so we can detect when the user
     /// switches input devices in settings and rebuild.
-    device_name: Option<String>,
+    requested_device: Option<String>,
+    /// The physical/default device that CPAL actually opened. For a missing
+    /// saved device we fall back to the current system default and track it here.
+    actual_device_name: Option<String>,
+    using_fallback: bool,
+    /// Set by CPAL's stream error callback when the endpoint disappears or the
+    /// stream otherwise becomes unusable. Checked on the next recording start.
+    stream_failed: Arc<AtomicBool>,
 }
 
 /// List input device names for the settings picker.
@@ -128,10 +135,14 @@ pub fn run(app: AppHandle, rx: Receiver<SessionEvent>) {
                 // different input device. The stream then runs for the app's
                 // lifetime — we never stop it, so the mic never makes a sound.
                 let need_new = match &active {
-                    Some(a) => a.device_name != device,
+                    Some(a) => stream_needs_rebuild(a, &device),
                     None => true,
                 };
                 if need_new {
+                    // Drop a dead/stale stream before opening the replacement so
+                    // the OS can release the old endpoint cleanly.
+                    capturing.store(false, Ordering::SeqCst);
+                    active = None;
                     match start_stream(device, capturing.clone()) {
                         Ok(a) => active = Some(a),
                         Err(e) => {
@@ -261,17 +272,37 @@ fn start_stream(device_name: Option<String>, capturing: Arc<AtomicBool>) -> Resu
     // Remember what was requested so the coordinator can detect device changes.
     let requested = device_name.clone();
     let host = cpal::default_host();
-    let device = match device_name {
-        Some(name) => host
-            .input_devices()
-            .map_err(|e| e.to_string())?
-            .find(|d| d.name().map(|n| n == name).unwrap_or(false))
-            .or_else(|| host.default_input_device())
-            .ok_or("no input device available")?,
-        None => host
-            .default_input_device()
-            .ok_or("no default input device")?,
+    let (device, using_fallback) = match device_name {
+        Some(name) => {
+            let selected = host
+                .input_devices()
+                .ok()
+                .and_then(|mut devs| devs.find(|d| d.name().map(|n| n == name).unwrap_or(false)));
+            match selected {
+                Some(device) => (device, false),
+                None => (
+                    host.default_input_device().ok_or_else(|| {
+                        format!(
+                            "selected input device '{name}' is unavailable and no default input device exists"
+                        )
+                    })?,
+                    true,
+                ),
+            }
+        }
+        None => (
+            host.default_input_device()
+                .ok_or("no default input device")?,
+            false,
+        ),
     };
+    let actual_device_name = device.name().ok();
+    if using_fallback {
+        eprintln!(
+            "[audio] requested input {:?} unavailable; using default input {:?}",
+            requested, actual_device_name
+        );
+    }
 
     let config = device.default_input_config().map_err(|e| e.to_string())?;
     let in_rate = config.sample_rate().0;
@@ -280,7 +311,12 @@ fn start_stream(device_name: Option<String>, capturing: Arc<AtomicBool>) -> Resu
 
     let buffer = Arc::new(Mutex::new(Vec::<f32>::new()));
     let buf = buffer.clone();
-    let err_fn = |e| eprintln!("[audio] stream error: {e}");
+    let stream_failed = Arc::new(AtomicBool::new(false));
+    let failed = stream_failed.clone();
+    let err_fn = move |e| {
+        eprintln!("[audio] stream error: {e}");
+        failed.store(true, Ordering::SeqCst);
+    };
     let cfg: cpal::StreamConfig = config.into();
 
     let stream = match sample_format {
@@ -340,8 +376,73 @@ fn start_stream(device_name: Option<String>, capturing: Arc<AtomicBool>) -> Resu
         stream,
         buffer,
         in_rate,
-        device_name: requested,
+        requested_device: requested,
+        actual_device_name,
+        using_fallback,
+        stream_failed,
     })
+}
+
+fn stream_needs_rebuild(active: &Active, requested_device: &Option<String>) -> bool {
+    let available = list_input_devices();
+    let current_default = default_input_device_name();
+    stream_needs_rebuild_for_names(
+        &active.requested_device,
+        &active.actual_device_name,
+        active.using_fallback,
+        active.stream_failed.load(Ordering::SeqCst),
+        requested_device,
+        &available,
+        current_default.as_deref(),
+    )
+}
+
+fn default_input_device_name() -> Option<String> {
+    cpal::default_host()
+        .default_input_device()
+        .and_then(|d| d.name().ok())
+}
+
+fn stream_needs_rebuild_for_names(
+    active_requested: &Option<String>,
+    active_actual: &Option<String>,
+    active_using_fallback: bool,
+    stream_failed: bool,
+    requested_device: &Option<String>,
+    available: &[String],
+    current_default: Option<&str>,
+) -> bool {
+    if active_requested != requested_device || stream_failed {
+        return true;
+    }
+
+    if let Some(actual) = active_actual {
+        if !available.iter().any(|name| name == actual) {
+            return true;
+        }
+    }
+
+    match requested_device {
+        Some(requested) => {
+            let requested_available = available.iter().any(|name| name == requested);
+            if requested_available {
+                active_using_fallback || active_actual.as_deref() != Some(requested.as_str())
+            } else if active_using_fallback {
+                match (active_actual.as_deref(), current_default) {
+                    (Some(actual), Some(default)) => actual != default,
+                    (None, Some(_)) => true,
+                    (_, None) => true,
+                }
+            } else {
+                true
+            }
+        }
+        None => match (active_actual.as_deref(), current_default) {
+            (Some(actual), Some(default)) => actual != default,
+            (Some(_), None) => true,
+            _ => false,
+        },
+    }
 }
 
 /// Append `data` (interleaved, `channels`-wide) to `buf`, downmixed to mono.
@@ -399,6 +500,34 @@ fn resample_to_16k(input: &[f32], in_rate: u32) -> Result<Vec<f32>, String> {
 mod tests {
     use super::*;
 
+    fn opt(value: Option<&str>) -> Option<String> {
+        value.map(|v| v.to_string())
+    }
+
+    fn names(values: &[&str]) -> Vec<String> {
+        values.iter().map(|v| (*v).to_string()).collect()
+    }
+
+    fn needs_rebuild(
+        active_requested: Option<&str>,
+        active_actual: Option<&str>,
+        active_using_fallback: bool,
+        stream_failed: bool,
+        requested_device: Option<&str>,
+        available: &[&str],
+        current_default: Option<&str>,
+    ) -> bool {
+        stream_needs_rebuild_for_names(
+            &opt(active_requested),
+            &opt(active_actual),
+            active_using_fallback,
+            stream_failed,
+            &opt(requested_device),
+            &names(available),
+            current_default,
+        )
+    }
+
     #[test]
     fn resample_48k_to_16k_length() {
         let input = vec![0.0f32; 48_000]; // 1 second @ 48 kHz
@@ -422,5 +551,90 @@ mod tests {
     fn resample_empty_is_empty() {
         let out = resample_to_16k(&[], 48_000).unwrap();
         assert!(out.is_empty());
+    }
+
+    #[test]
+    fn stream_stays_active_when_default_device_is_unchanged() {
+        assert!(!needs_rebuild(
+            None,
+            Some("Desk Mic"),
+            false,
+            false,
+            None,
+            &["Desk Mic"],
+            Some("Desk Mic"),
+        ));
+    }
+
+    #[test]
+    fn stream_rebuilds_after_cpal_reports_error() {
+        assert!(needs_rebuild(
+            None,
+            Some("Desk Mic"),
+            false,
+            true,
+            None,
+            &["Desk Mic"],
+            Some("Desk Mic"),
+        ));
+    }
+
+    #[test]
+    fn stream_rebuilds_when_actual_device_disappears() {
+        assert!(needs_rebuild(
+            None,
+            Some("Old Mic"),
+            false,
+            false,
+            None,
+            &["New Mic"],
+            Some("New Mic"),
+        ));
+    }
+
+    #[test]
+    fn stream_rebuilds_when_system_default_changes() {
+        assert!(needs_rebuild(
+            None,
+            Some("Old Mic"),
+            false,
+            false,
+            None,
+            &["Old Mic", "New Mic"],
+            Some("New Mic"),
+        ));
+    }
+
+    #[test]
+    fn fallback_stream_tracks_default_until_selected_device_returns() {
+        assert!(!needs_rebuild(
+            Some("Travel Mic"),
+            Some("Laptop Mic"),
+            true,
+            false,
+            Some("Travel Mic"),
+            &["Laptop Mic"],
+            Some("Laptop Mic"),
+        ));
+
+        assert!(needs_rebuild(
+            Some("Travel Mic"),
+            Some("Laptop Mic"),
+            true,
+            false,
+            Some("Travel Mic"),
+            &["Travel Mic", "Laptop Mic"],
+            Some("Laptop Mic"),
+        ));
+
+        assert!(needs_rebuild(
+            Some("Travel Mic"),
+            Some("Laptop Mic"),
+            true,
+            false,
+            Some("Travel Mic"),
+            &["Laptop Mic", "Dock Mic"],
+            Some("Dock Mic"),
+        ));
     }
 }
