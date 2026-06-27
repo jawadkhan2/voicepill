@@ -45,6 +45,19 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Configure bindgen
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $libclang = Get-ChildItem "C:\Program Files\LLVM" -Filter "libclang.dll" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $libclang) {
+            throw "libclang.dll not found; bindgen needs LLVM/Clang on the Windows runner"
+          }
+
+          $libclangPath = Split-Path $libclang.FullName -Parent
+          "LIBCLANG_PATH=$libclangPath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "LIBCLANG_PATH=$libclangPath"
+
       - name: Install CUDA Toolkit
         uses: Jimver/cuda-toolkit@v0.2.35
         with:
