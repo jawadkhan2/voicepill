@@ -165,7 +165,12 @@ $manifest = [ordered]@{
   }
 }
 $manifestPath = Join-Path $nsisDir "latest.json"
-($manifest | ConvertTo-Json -Depth 8) | Set-Content $manifestPath -Encoding utf8
+$manifestJson = ($manifest | ConvertTo-Json -Depth 8) + [Environment]::NewLine
+[System.IO.File]::WriteAllText(
+  $manifestPath,
+  $manifestJson,
+  [System.Text.UTF8Encoding]::new($false)
+)
 Write-Host "Wrote $manifestPath" -ForegroundColor Green
 
 # ---- Publish to GitHub ----------------------------------------------------
