@@ -1,0 +1,192 @@
+name: Build Windows Release Asset
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build and attach assets to, for example v0.1.6"
+        required: true
+        type: string
+      version:
+        description: "Release version, for example 0.1.6"
+        required: true
+        type: string
+      notes:
+        description: "Release notes shown in latest.json and on GitHub"
+        required: false
+        default: ""
+        type: string
+      draft:
+        description: "Create the GitHub release as a draft when it does not exist"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Build Windows NSIS installer
+    runs-on: windows-2022
+
+    steps:
+      - name: Check out release source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install CUDA Toolkit
+        uses: Jimver/cuda-toolkit@v0.2.24
+        with:
+          cuda: "13.2.0"
+
+      - name: Verify CUDA
+        shell: pwsh
+        run: |
+          nvcc --version
+          Write-Host "CUDA_PATH=$env:CUDA_PATH"
+
+      - name: Install JavaScript dependencies
+        run: npm ci
+
+      - name: Prepare updater signing key
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY_SECRET: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD_SECRET: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY_SECRET)) {
+            throw "Missing repository secret TAURI_SIGNING_PRIVATE_KEY"
+          }
+          if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD_SECRET)) {
+            throw "Missing repository secret TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
+          }
+
+          $keyPath = Join-Path $env:RUNNER_TEMP "voicepill_updater.key"
+          [System.IO.File]::WriteAllText(
+            $keyPath,
+            $env:TAURI_SIGNING_PRIVATE_KEY_SECRET,
+            [System.Text.UTF8Encoding]::new($false)
+          )
+
+          "TAURI_SIGNING_PRIVATE_KEY=$keyPath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD_SECRET" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Build signed installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          # MSBuild's C++ tasks can crash if the process environment contains
+          # both Path and PATH. Normalize before Cargo/CMake/MSBuild run.
+          $pathValue = [System.Environment]::GetEnvironmentVariable("Path", "Process")
+          if (-not $pathValue) {
+            $pathValue = [System.Environment]::GetEnvironmentVariable("PATH", "Process")
+          }
+          if ($pathValue) {
+            [System.Environment]::SetEnvironmentVariable("PATH", $null, "Process")
+            [System.Environment]::SetEnvironmentVariable("Path", $null, "Process")
+            [System.Environment]::SetEnvironmentVariable("Path", $pathValue, "Process")
+          }
+
+          Push-Location src-tauri
+          try {
+            cargo clean -p whisper-rs-sys
+          } finally {
+            Pop-Location
+          }
+
+          npm run tauri -- build
+
+      - name: Create updater manifest
+        shell: pwsh
+        env:
+          TAG: ${{ inputs.tag }}
+          VERSION: ${{ inputs.version }}
+          NOTES: ${{ inputs.notes }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $nsisDir = Join-Path $pwd "src-tauri/target/release/bundle/nsis"
+          $installer = Get-ChildItem $nsisDir -Filter "*_${env:VERSION}_x64-setup.exe" | Select-Object -First 1
+          if (-not $installer) {
+            throw "Installer not found in $nsisDir for version $env:VERSION"
+          }
+
+          $sigFile = "$($installer.FullName).sig"
+          if (-not (Test-Path $sigFile)) {
+            throw "Signature not found: $sigFile"
+          }
+
+          $signature = (Get-Content $sigFile -Raw).Trim()
+          $assetUrl = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$env:TAG/$($installer.Name)"
+          $manifest = [ordered]@{
+            version = $env:VERSION
+            notes = $env:NOTES
+            pub_date = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+            platforms = [ordered]@{
+              "windows-x86_64" = [ordered]@{
+                signature = $signature
+                url = $assetUrl
+              }
+            }
+          }
+
+          $manifestPath = Join-Path $nsisDir "latest.json"
+          $manifestJson = ($manifest | ConvertTo-Json -Depth 8) + [Environment]::NewLine
+          [System.IO.File]::WriteAllText(
+            $manifestPath,
+            $manifestJson,
+            [System.Text.UTF8Encoding]::new($false)
+          )
+
+          "INSTALLER=$($installer.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "MANIFEST=$manifestPath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VoicePill-${{ inputs.version }}-windows
+          path: |
+            ${{ env.INSTALLER }}
+            ${{ env.MANIFEST }}
+
+      - name: Publish release assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+          VERSION: ${{ inputs.version }}
+          NOTES: ${{ inputs.notes }}
+          DRAFT: ${{ inputs.draft }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $releaseExists = $false
+          gh release view $env:TAG --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) {
+            $releaseExists = $true
+          }
+
+          if ($releaseExists) {
+            gh release upload $env:TAG $env:INSTALLER $env:MANIFEST --repo $env:GITHUB_REPOSITORY --clobber
+          } else {
+            $draftArgs = @()
+            if ($env:DRAFT -eq "true") {
+              $draftArgs += "--draft"
+            }
+            gh release create $env:TAG $env:INSTALLER $env:MANIFEST `
+              --repo $env:GITHUB_REPOSITORY `
+              --title "VoicePill $env:TAG" `
+              --notes $env:NOTES `
+              @draftArgs
+          }

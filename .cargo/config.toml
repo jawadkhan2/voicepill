@@ -1,0 +1,7 @@
+[env]
+# Keep release installers portable. Without these, ggml/whisper.cpp defaults to a
+# native build, which can emit CUDA kernels only for the GPU present on the build
+# machine. An installer built that way can crash when transcription starts on an
+# older card such as an RTX 2070 (compute capability 7.5).
+GGML_NATIVE = { value = "OFF", force = true }
+CMAKE_CUDA_ARCHITECTURES = { value = "75;80-virtual;86-real;89-real;120a-real", force = true }
