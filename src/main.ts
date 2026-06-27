@@ -8,7 +8,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { applyAppearance, watchSystemTheme, type Appearance } from "./appearance";
 import { initHistory } from "./history";
-import { initSettings } from "./settings";
+import { cancelPendingCapture, initSettings } from "./settings";
 import { checkForUpdate } from "./update";
 import { toast } from "./toast";
 
@@ -36,6 +36,7 @@ const win = getCurrentWindow();
 // Hide (instead of destroy) on close, so the window re-shows instantly.
 win.onCloseRequested(async (event) => {
   event.preventDefault();
+  cancelPendingCapture();
   await win.hide();
 });
 
@@ -47,6 +48,7 @@ let view: View = "transcripts";
 
 function setView(next: View) {
   if (next === view) return;
+  if (view === "settings" && next !== "settings") cancelPendingCapture();
   view = next;
   shell.dataset.view = next; // CSS slides/crossfades the two views
   sub.textContent = SUBTITLE[next];
@@ -66,7 +68,10 @@ const winClose = document.getElementById("win-close") as HTMLButtonElement;
 winMin.onclick = () => void win.minimize();
 winMax.onclick = () => void win.toggleMaximize();
 // Match the title-bar close to the OS close: hide (the app lives in the tray).
-winClose.onclick = () => void win.hide();
+winClose.onclick = () => {
+  cancelPendingCapture();
+  void win.hide();
+};
 
 /** Reflect the maximized state in the chrome (square corners + restore icon). */
 async function syncMaximized() {

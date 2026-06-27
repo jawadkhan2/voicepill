@@ -1,6 +1,6 @@
 [package]
 name = "voicepill"
-version = "0.1.4"
+version = "0.1.5"
 description = "Local voice transcription pill"
 authors = ["VoicePill"]
 edition = "2021"
@@ -52,6 +52,7 @@ windows = { version = "0.61", features = [
     "Win32_UI_Input",
     "Win32_Devices_HumanInterfaceDevice",
     "Win32_Storage_FileSystem",
+    "Win32_System_DataExchange",
     "Win32_System_IO",
     "Win32_System_Threading",
     "Win32_UI_WindowsAndMessaging",

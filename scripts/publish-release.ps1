@@ -49,6 +49,23 @@ $lockPath  = Join-Path $root "package-lock.json"
 $keyPath   = Join-Path $HOME ".tauri/voicepill_updater.key"
 $pwPath    = Join-Path $HOME ".tauri/voicepill_updater.pw"
 
+# MSBuild's C++ tasks crash if the process environment contains both `Path` and
+# `PATH` keys. Some shells can create that duplicate block; normalize it before
+# spawning cargo/CMake/MSBuild.
+function Normalize-ProcessPathEnv {
+  $pathValue = [System.Environment]::GetEnvironmentVariable("Path", "Process")
+  if (-not $pathValue) {
+    $pathValue = [System.Environment]::GetEnvironmentVariable("PATH", "Process")
+  }
+  if ($pathValue) {
+    [System.Environment]::SetEnvironmentVariable("PATH", $null, "Process")
+    [System.Environment]::SetEnvironmentVariable("Path", $null, "Process")
+    [System.Environment]::SetEnvironmentVariable("Path", $pathValue, "Process")
+  }
+}
+
+Normalize-ProcessPathEnv
+
 # ---- Preconditions --------------------------------------------------------
 # Password: env var wins; else fall back to the on-disk .pw file.
 $signPw = $env:VOICEPILL_SIGN_PW

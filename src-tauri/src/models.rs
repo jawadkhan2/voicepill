@@ -80,6 +80,14 @@ fn is_known(id: &str) -> bool {
     CATALOG.iter().any(|m| m.id == id)
 }
 
+pub fn validate_id(id: &str) -> Result<(), String> {
+    if is_known(id) {
+        Ok(())
+    } else {
+        Err(format!("unknown model: {id}"))
+    }
+}
+
 /// List the catalog with on-disk status for each model.
 pub fn list(app: &AppHandle) -> Vec<ModelInfo> {
     CATALOG
@@ -95,6 +103,7 @@ pub fn list(app: &AppHandle) -> Vec<ModelInfo> {
 
 /// Delete a downloaded model file.
 pub fn delete(app: &AppHandle, id: &str) -> Result<(), String> {
+    validate_id(id)?;
     let path = model_file(app, id)?;
     if path.exists() {
         std::fs::remove_file(&path).map_err(|e| e.to_string())?;
@@ -105,9 +114,7 @@ pub fn delete(app: &AppHandle, id: &str) -> Result<(), String> {
 /// Begin downloading `id` on a background thread. Returns immediately; progress
 /// is reported via events. Re-downloads overwrite via a temp file + rename.
 pub fn download(app: &AppHandle, id: String) -> Result<(), String> {
-    if !is_known(&id) {
-        return Err(format!("unknown model: {id}"));
-    }
+    validate_id(&id)?;
     let dir = models_dir(app)?;
     let dest = model_file(app, &id)?;
     let url = format!("{HF_BASE}/ggml-{id}.bin");

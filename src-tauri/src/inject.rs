@@ -6,6 +6,7 @@
 //! preserves Unicode, where synthesizing each keystroke would be slow and
 //! locale-dependent.
 
+use std::path::PathBuf;
 use std::time::Duration;
 
 use arboard::{Clipboard, ImageData};
@@ -15,22 +16,41 @@ use enigo::{
 };
 
 /// A snapshot of the clipboard taken before we overwrite it, so the prior
-/// contents can be restored after the paste lands. arboard exposes text and
-/// images; whichever the clipboard held is captured (text wins if both exist).
+/// contents can be restored after the paste lands. Prefer richer formats first
+/// so file lists, images, and HTML are not flattened to plain text.
 enum Snapshot {
     Text(String),
+    Html {
+        html: String,
+        alt_text: Option<String>,
+    },
     Image(ImageData<'static>),
+    FileList(Vec<PathBuf>),
     Empty,
+    Unsupported,
 }
 
 fn capture(clipboard: &mut Clipboard) -> Snapshot {
-    if let Ok(text) = clipboard.get_text() {
-        return Snapshot::Text(text);
+    if let Ok(files) = clipboard.get().file_list() {
+        if !files.is_empty() {
+            return Snapshot::FileList(files);
+        }
     }
     if let Ok(img) = clipboard.get_image() {
         return Snapshot::Image(img);
     }
-    Snapshot::Empty
+    let html = clipboard.get().html().ok();
+    let text = clipboard.get_text().ok();
+    if let Some(html) = html {
+        return Snapshot::Html {
+            html,
+            alt_text: text,
+        };
+    }
+    if let Some(text) = text {
+        return Snapshot::Text(text);
+    }
+    unknown_snapshot()
 }
 
 fn restore(clipboard: &mut Clipboard, snap: Snapshot) {
@@ -38,19 +58,53 @@ fn restore(clipboard: &mut Clipboard, snap: Snapshot) {
         Snapshot::Text(t) => {
             let _ = clipboard.set_text(t);
         }
+        Snapshot::Html { html, alt_text } => {
+            let _ = clipboard.set().html(html, alt_text);
+        }
         Snapshot::Image(img) => {
             let _ = clipboard.set_image(img);
         }
-        // Nothing recognizable was there (or it was empty); clear our text so we
-        // don't leave the transcript lingering on the clipboard.
+        Snapshot::FileList(files) => {
+            let _ = clipboard.set().file_list(&files);
+        }
         Snapshot::Empty => {
             let _ = clipboard.clear();
         }
+        Snapshot::Unsupported => {}
+    }
+}
+
+#[cfg(windows)]
+fn unknown_snapshot() -> Snapshot {
+    match clipboard_has_data() {
+        Some(true) | None => Snapshot::Unsupported,
+        Some(false) => Snapshot::Empty,
+    }
+}
+
+#[cfg(not(windows))]
+fn unknown_snapshot() -> Snapshot {
+    Snapshot::Empty
+}
+
+#[cfg(windows)]
+fn clipboard_has_data() -> Option<bool> {
+    use windows::Win32::System::DataExchange::{
+        CloseClipboard, CountClipboardFormats, OpenClipboard,
+    };
+
+    unsafe {
+        if OpenClipboard(None).is_err() {
+            return None;
+        }
+        let count = CountClipboardFormats();
+        let _ = CloseClipboard();
+        Some(count > 0)
     }
 }
 
 /// Paste `text` into the focused field. When `restore_clipboard` is set, the
-/// user's previous clipboard contents (text or image) are put back after the
+/// user's previous supported clipboard contents are put back after the
 /// paste lands.
 pub fn paste_text(text: &str, restore_clipboard: bool) -> Result<(), String> {
     if text.is_empty() {
@@ -59,7 +113,14 @@ pub fn paste_text(text: &str, restore_clipboard: bool) -> Result<(), String> {
 
     let mut clipboard = Clipboard::new().map_err(|e| e.to_string())?;
     let previous = if restore_clipboard {
-        Some(capture(&mut clipboard))
+        let snap = capture(&mut clipboard);
+        if matches!(snap, Snapshot::Unsupported) {
+            return Err(
+                "clipboard contains data VoicePill cannot safely restore; disable Restore clipboard to overwrite it"
+                    .into(),
+            );
+        }
+        Some(snap)
     } else {
         None
     };

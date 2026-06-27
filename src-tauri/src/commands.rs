@@ -29,23 +29,44 @@ pub fn get_settings(state: State<'_, SettingsState>) -> Settings {
 #[tauri::command]
 pub fn update_settings(
     app: AppHandle,
-    settings: Settings,
+    mut settings: Settings,
     state: State<'_, SettingsState>,
     hook: State<'_, Arc<HookState>>,
 ) -> Result<Settings, String> {
-    settings::save(&app, &settings)?;
+    if let Some(model) = settings.model.as_deref() {
+        crate::models::validate_id(model)?;
+    }
+
+    let previous = state.0.lock().unwrap().clone();
+    let previous_autostart = previous.autostart;
+    settings.pill_pos = previous.pill_pos;
+    settings.transcript_history = previous.transcript_history;
+
+    if settings.autostart != previous_autostart {
+        let autolaunch = app.autolaunch();
+        if settings.autostart {
+            autolaunch.enable()
+        } else {
+            autolaunch.disable()
+        }
+        .map_err(|e| format!("autostart update failed: {e}"))?;
+    }
+
+    if let Err(err) = settings::save(&app, &settings) {
+        if settings.autostart != previous_autostart {
+            let autolaunch = app.autolaunch();
+            let _ = if previous_autostart {
+                autolaunch.enable()
+            } else {
+                autolaunch.disable()
+            };
+        }
+        return Err(err);
+    }
 
     // Keep the input hook's view of the binding/mode current.
     *hook.binding.lock().unwrap() = settings.trigger.clone();
     *hook.mode.lock().unwrap() = settings.trigger_mode;
-
-    // Toggle the Windows autostart registry entry.
-    let autolaunch = app.autolaunch();
-    let _ = if settings.autostart {
-        autolaunch.enable()
-    } else {
-        autolaunch.disable()
-    };
 
     *state.0.lock().unwrap() = settings.clone();
 
@@ -102,6 +123,7 @@ pub fn select_model(
     state: State<'_, SettingsState>,
     hook: State<'_, Arc<HookState>>,
 ) -> Result<Settings, String> {
+    crate::models::validate_id(&id)?;
     let updated = {
         let mut g = state.0.lock().unwrap();
         g.model = Some(id.clone());
@@ -167,9 +189,10 @@ pub fn open_history_window(app: AppHandle) {
 
 /// Pill click: open history if hidden, close it if already visible.
 #[tauri::command]
-pub fn toggle_history_window(app: AppHandle) {
+pub fn toggle_history_window(app: AppHandle, hook: State<'_, Arc<HookState>>) {
     if let Some(win) = app.get_webview_window("main") {
         if win.is_visible().unwrap_or(false) {
+            hook.capturing.store(false, Ordering::SeqCst);
             let _ = win.hide();
             return;
         }

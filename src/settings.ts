@@ -250,6 +250,10 @@ async function cancelCapture() {
   render();
 }
 
+export function cancelPendingCapture() {
+  if (capturing) void cancelCapture();
+}
+
 // ---- Rendering -----------------------------------------------------------
 function render() {
   root.innerHTML = "";
@@ -716,8 +720,15 @@ function generalSection(): HTMLElement {
     row(
       "Start on boot",
       toggleSwitch(settings.autostart, async (v) => {
+        const previous = settings.autostart;
         settings.autostart = v;
-        await persist();
+        try {
+          await persist();
+        } catch (e) {
+          settings.autostart = previous;
+          toast(`Start on boot failed: ${e}`);
+          render();
+        }
       }),
     ),
   );
