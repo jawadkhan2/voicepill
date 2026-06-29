@@ -62,6 +62,13 @@ interface GpuInfo {
   vram_process_mb: number;
 }
 
+interface AudioError {
+  kind: string;
+  message: string;
+  detail: string;
+  sticky: boolean;
+}
+
 const LANGUAGES: Array<[string, string]> = [
   ["auto", "Auto-detect"],
   ["en", "English"],
@@ -82,6 +89,8 @@ const LANGUAGES: Array<[string, string]> = [
 let settings: Settings;
 let capturing = false;
 let audioDevices: string[] = [];
+let audioError: AudioError | null = null;
+let audioRefreshTimer: number | undefined;
 let models: ModelInfo[] = [];
 // modelId -> percent (0-100) while a download is in flight.
 const downloading = new Map<string, number>();
@@ -100,13 +109,12 @@ const root = document.getElementById("settings-root")!;
 
 export async function initSettings() {
   settings = await invoke<Settings>("get_settings");
-  try {
-    audioDevices = await invoke<string[]>("list_audio_devices");
-  } catch {
-    audioDevices = [];
-  }
+  await refreshAudioDevices(false);
   await refreshModels();
   render();
+  if (audioRefreshTimer === undefined) {
+    audioRefreshTimer = window.setInterval(() => void refreshAudioDevices(), 2500);
+  }
   // Poll GPU/VRAM stats while settings is open (updates in place, no re-render).
   void pollGpu();
   window.setInterval(() => void pollGpu(), 1500);
@@ -118,6 +126,23 @@ async function refreshModels() {
   } catch {
     models = [];
   }
+}
+
+function sameStringList(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((value, index) => value === b[index]);
+}
+
+async function refreshAudioDevices(renderOnChange = true) {
+  let next: string[];
+  try {
+    next = await invoke<string[]>("list_audio_devices");
+  } catch {
+    next = [];
+  }
+  if (sameStringList(audioDevices, next)) return;
+  audioDevices = next;
+  if (audioDevices.length > 0 && audioError?.sticky) audioError = null;
+  if (renderOnChange) render();
 }
 
 /** Human label for a model id (falls back to the id if not yet loaded). */
@@ -187,6 +212,13 @@ listen<{ id: string; error: string }>("model:load-error", (e) => {
   loadErrors.set(e.payload.id, e.payload.error);
   console.error("model load failed", e.payload.error);
   toast("Model load failed");
+  render();
+});
+
+listen<AudioError>("audio:error", (e) => {
+  audioError = e.payload;
+  toast(e.payload.message);
+  void refreshAudioDevices(false);
   render();
 });
 
@@ -297,6 +329,20 @@ function row(label: string, control: HTMLElement, hint?: string): HTMLElement {
   r.appendChild(left);
   r.appendChild(control);
   return r;
+}
+
+function notice(kind: "error" | "warning", title: string, detail: string): HTMLElement {
+  const n = document.createElement("div");
+  n.className = `notice ${kind}`;
+  const h = document.createElement("div");
+  h.className = "notice-title";
+  h.textContent = title;
+  const p = document.createElement("div");
+  p.className = "notice-detail";
+  p.textContent = detail;
+  n.appendChild(h);
+  n.appendChild(p);
+  return n;
 }
 
 function triggerSection(): HTMLElement {
@@ -561,6 +607,29 @@ async function pollGpu() {
 
 function audioSection(): HTMLElement {
   const s = section("Audio");
+  const selectedMissing = Boolean(
+    settings.audio_device && !audioDevices.includes(settings.audio_device),
+  );
+
+  if (audioDevices.length === 0) {
+    s.appendChild(
+      notice(
+        "error",
+        "No microphone detected",
+        "Plug in or enable a microphone. VoicePill will update when one appears.",
+      ),
+    );
+  } else if (selectedMissing && settings.audio_device) {
+    s.appendChild(
+      notice(
+        "warning",
+        "Selected microphone unavailable",
+        `"${settings.audio_device}" is not connected. Choose another input or use system default.`,
+      ),
+    );
+  } else if (audioError && !audioError.sticky) {
+    s.appendChild(notice("error", audioError.message, audioError.detail));
+  }
 
   const dev = document.createElement("select");
   dev.className = "select";
@@ -570,6 +639,14 @@ function audioSection(): HTMLElement {
   def.textContent = "System default";
   if (!settings.audio_device) def.selected = true;
   dev.appendChild(def);
+
+  if (selectedMissing && settings.audio_device) {
+    const missing = document.createElement("option");
+    missing.value = settings.audio_device;
+    missing.textContent = `${settings.audio_device} (not found)`;
+    missing.selected = true;
+    dev.appendChild(missing);
+  }
 
   for (const name of audioDevices) {
     const o = document.createElement("option");
@@ -587,7 +664,11 @@ function audioSection(): HTMLElement {
     row(
       "Input device",
       dev,
-      audioDevices.length ? undefined : "No input devices detected",
+      audioDevices.length
+        ? selectedMissing
+          ? "Selected input is not connected"
+          : undefined
+        : "No input devices detected",
     ),
   );
   return s;

@@ -5,8 +5,16 @@ import { applyAppearance, watchSystemTheme, type Appearance } from "./appearance
 
 type PillState = "idle" | "listening" | "busy" | "error";
 
+interface AudioError {
+  kind: string;
+  message: string;
+  detail: string;
+  sticky: boolean;
+}
+
 const pill = document.getElementById("pill") as HTMLDivElement;
 const label = document.getElementById("pill-label") as HTMLDivElement;
+const DEFAULT_TITLE = pill.title;
 
 const STATE_LABEL: Record<PillState, string> = {
   idle: "Ready",
@@ -15,10 +23,71 @@ const STATE_LABEL: Record<PillState, string> = {
   error: "Error",
 };
 
-function setState(state: PillState) {
+const NO_MIC_ERROR: AudioError = {
+  kind: "no_input_device",
+  message: "No microphone detected",
+  detail: "Plug in or enable a microphone, then try again.",
+  sticky: true,
+};
+
+let currentState: PillState = "idle";
+let stickyAudioError: AudioError | null = null;
+let errorReset: number | undefined;
+let lastKnownHasDevices: boolean | null = null;
+
+function applyState(state: PillState, text = STATE_LABEL[state], title = DEFAULT_TITLE) {
+  currentState = state;
   pill.classList.remove("state-idle", "state-listening", "state-busy", "state-error");
   pill.classList.add(`state-${state}`);
-  label.textContent = STATE_LABEL[state];
+  label.textContent = text;
+  pill.title = title;
+  pill.setAttribute("aria-label", title);
+}
+
+function audioErrorLabel(error: AudioError): string {
+  if (error.kind === "no_input_device") return "No mic";
+  if (error.kind === "selected_input_unavailable") return "Mic missing";
+  if (error.kind === "input_stream_lost") return "Mic lost";
+  if (error.kind === "model_load_failed") return "Model load failed";
+  if (error.kind === "no_model") return "Pick a model";
+  return "Mic error";
+}
+
+function audioErrorTitle(error: AudioError): string {
+  return error.detail ? `${error.message}. ${error.detail}` : error.message;
+}
+
+function applyAudioError(error: AudioError) {
+  applyState("error", audioErrorLabel(error), audioErrorTitle(error));
+}
+
+function setState(state: PillState) {
+  if (state === "listening") stickyAudioError = null;
+  if (state === "idle" && stickyAudioError) {
+    applyAudioError(stickyAudioError);
+    return;
+  }
+  if (state === "error" && stickyAudioError) {
+    applyAudioError(stickyAudioError);
+    return;
+  }
+  applyState(state);
+}
+
+function showAudioError(error: AudioError) {
+  window.clearTimeout(errorReset);
+  if (error.sticky) {
+    stickyAudioError = error;
+    applyAudioError(error);
+    return;
+  }
+  const previousSticky = stickyAudioError;
+  stickyAudioError = null;
+  applyAudioError(error);
+  errorReset = window.setTimeout(() => {
+    if (previousSticky && lastKnownHasDevices === false) stickyAudioError = previousSticky;
+    setState("idle");
+  }, 2400);
 }
 
 async function openSettings() {
@@ -64,16 +133,17 @@ void getCurrentWindow().onMoved(({ payload }) => {
 });
 
 // Backend drives the pill state through this event.
-let errorReset: number | undefined;
 void listen<PillState>("pill:state", (event) => {
   const state = event.payload;
   setState(state);
   // The error state is momentary — flash, then fall back to idle.
   window.clearTimeout(errorReset);
-  if (state === "error") {
+  if (state === "error" && !stickyAudioError) {
     errorReset = window.setTimeout(() => setState("idle"), 1800);
   }
 });
+
+void listen<AudioError>("audio:error", (event) => showAudioError(event.payload));
 
 // Model is being loaded into VRAM (boot warm-up or a "Use" click). Show a
 // spinner on the pill so the user knows the GPU is busy getting ready.
@@ -84,22 +154,49 @@ void listen("model:loading", () => {
 });
 void listen("model:loaded", () => setState("idle"));
 void listen<{ id: string; error: string }>("model:load-error", () => {
-  setState("error");
-  label.textContent = "Model load failed";
-  window.clearTimeout(errorReset);
-  errorReset = window.setTimeout(() => setState("idle"), 2200);
+  showAudioError({
+    kind: "model_load_failed",
+    message: "Model load failed",
+    detail: "Open settings to retry or choose another model.",
+    sticky: false,
+  });
 });
 
 // Triggered with no model selected: briefly tell the user and open settings.
 void listen("transcribe:no-model", () => {
-  setState("error");
-  label.textContent = "Pick a model";
-  window.clearTimeout(errorReset);
-  errorReset = window.setTimeout(() => setState("idle"), 2200);
+  showAudioError({
+    kind: "no_model",
+    message: "Pick a model",
+    detail: "Open settings and choose a transcription model.",
+    sticky: false,
+  });
   void openSettings();
 });
 
 setState("idle");
+
+async function refreshAudioAvailability() {
+  try {
+    const devices = await invoke<string[]>("list_audio_devices");
+    const hasDevices = devices.length > 0;
+    if (lastKnownHasDevices === hasDevices) return;
+    lastKnownHasDevices = hasDevices;
+    if (!hasDevices) {
+      showAudioError(NO_MIC_ERROR);
+      return;
+    }
+    if (stickyAudioError) {
+      stickyAudioError = null;
+      window.clearTimeout(errorReset);
+      if (currentState === "error") setState("idle");
+    }
+  } catch {
+    /* Keep the last known pill state if device enumeration fails. */
+  }
+}
+
+void refreshAudioAvailability();
+window.setInterval(() => void refreshAudioAvailability(), 2500);
 
 // ---- Appearance (theme / accent / pill size + opacity + compact) ---------
 // The pill reads its look from settings on boot, follows the OS theme when set

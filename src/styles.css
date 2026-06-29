@@ -206,6 +206,23 @@ body {
   display: block;
   background: var(--vp-error);
 }
+.state-error .pill-icon::after {
+  content: "!";
+  position: absolute;
+  right: -3px;
+  bottom: -2px;
+  width: 12px;
+  height: 12px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--vp-error);
+  color: #fff;
+  border: 1px solid var(--vp-bg);
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1;
+}
 
 @keyframes wave {
   0%, 100% { height: 6px; }
@@ -295,6 +312,30 @@ body {
   margin-top: 3px;
   font-size: 12px;
   font-weight: 400;
+  color: var(--vp-muted);
+}
+.notice {
+  margin: 12px 0 2px;
+  padding: 11px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--vp-border);
+  background: var(--vp-surface-2);
+}
+.notice.error {
+  border-color: rgba(255, 92, 124, 0.45);
+  background: color-mix(in srgb, var(--vp-error) 9%, var(--vp-surface));
+}
+.notice.warning {
+  border-color: rgba(255, 180, 84, 0.45);
+  background: color-mix(in srgb, var(--vp-busy) 9%, var(--vp-surface));
+}
+.notice-title {
+  font-size: 13px;
+  font-weight: 700;
+}
+.notice-detail {
+  margin-top: 3px;
+  font-size: 12px;
   color: var(--vp-muted);
 }
 .muted-inline {

@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex};
 use rdev::{listen, Button, EventType, Key};
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::audio::SessionEvent;
+use crate::audio::{self, SessionEvent};
 use crate::settings::{SettingsState, TriggerBinding, TriggerKind, TriggerMode};
 
 /// Shared, thread-safe state for the input hook.
@@ -27,7 +27,7 @@ pub struct HookState {
     /// When true, the next press is consumed as a new binding instead of firing.
     pub capturing: AtomicBool,
     /// True while we are recording (push-to-talk held, or toggle "on").
-    pub recording: AtomicBool,
+    pub recording: Arc<AtomicBool>,
     /// Debounces OS key auto-repeat: true between a real press and its release.
     pub physically_down: AtomicBool,
     /// Drives the audio coordinator thread. Sending must stay non-blocking so the
@@ -45,7 +45,7 @@ impl HookState {
             binding: Mutex::new(binding),
             mode: Mutex::new(mode),
             capturing: AtomicBool::new(false),
-            recording: AtomicBool::new(false),
+            recording: Arc::new(AtomicBool::new(false)),
             physically_down: AtomicBool::new(false),
             session_tx,
         }
@@ -151,22 +151,28 @@ fn start_recording(app: &AppHandle, state: &Arc<HookState>) {
     // No model selected — don't start the listening animation. Nudge the user
     // to pick one instead. Without this the pill shows "listening" through a
     // whole recording on a fresh install, then silently drops it at transcribe.
-    let has_model = app
-        .state::<SettingsState>()
-        .0
-        .lock()
-        .unwrap()
-        .model
-        .is_some();
+    let (has_model, device) = {
+        let state = app.state::<SettingsState>();
+        let settings = state.0.lock().unwrap();
+        (settings.model.is_some(), settings.audio_device.clone())
+    };
     if !has_model {
         let _ = app.emit("transcribe:no-model", ());
+        return;
+    }
+
+    if let Some(error) = audio::input_device_problem(device.as_deref()) {
+        audio::emit_audio_error(app, &error);
+        let _ = app.emit("pill:state", "error");
         return;
     }
 
     if state.recording.swap(true, Ordering::SeqCst) {
         return; // already recording
     }
-    let _ = state.session_tx.send(SessionEvent::Start);
+    let _ = state.session_tx.send(SessionEvent::Start {
+        recording: state.recording.clone(),
+    });
     let _ = app.emit("trigger:start", ());
     let _ = app.emit("pill:state", "listening");
 }

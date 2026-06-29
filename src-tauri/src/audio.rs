@@ -18,6 +18,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use rubato::{
     Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction,
 };
+use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::history::TranscriptHistoryState;
@@ -34,9 +35,19 @@ const TARGET_RATE: u32 = 16_000;
 const MIN_SPEECH_SECONDS: f32 = 0.3;
 const SPEECH_RMS_FLOOR: f32 = 0.0025; // ≈ -52 dBFS
 
+#[derive(Clone, Debug, Serialize)]
+pub struct AudioErrorPayload {
+    pub kind: String,
+    pub message: String,
+    pub detail: String,
+    pub sticky: bool,
+}
+
 /// Sent from the input hook to the audio coordinator thread.
 pub enum SessionEvent {
-    Start,
+    Start {
+        recording: Arc<AtomicBool>,
+    },
     Stop,
     /// Preload a model into VRAM (user clicked "Use"). Handled on this thread so
     /// the `!Send` CUDA context stays single-threaded; reports progress via
@@ -73,6 +84,71 @@ pub fn list_input_devices() -> Vec<String> {
         Ok(devs) => devs.filter_map(|d| d.name().ok()).collect(),
         Err(_) => Vec::new(),
     }
+}
+
+pub fn input_device_problem(device_name: Option<&str>) -> Option<AudioErrorPayload> {
+    let host = cpal::default_host();
+    match device_name {
+        Some(name) => {
+            let selected_available = host
+                .input_devices()
+                .ok()
+                .map(|mut devs| devs.any(|d| d.name().map(|n| n == name).unwrap_or(false)))
+                .unwrap_or(false);
+            if selected_available || host.default_input_device().is_some() {
+                None
+            } else {
+                Some(selected_input_unavailable_error(name))
+            }
+        }
+        None => {
+            if host.default_input_device().is_some() {
+                None
+            } else {
+                Some(no_input_device_error())
+            }
+        }
+    }
+}
+
+pub fn emit_audio_error(app: &AppHandle, error: &AudioErrorPayload) {
+    let _ = app.emit("audio:error", error);
+}
+
+fn audio_error(
+    kind: &str,
+    message: impl Into<String>,
+    detail: impl Into<String>,
+    sticky: bool,
+) -> AudioErrorPayload {
+    AudioErrorPayload {
+        kind: kind.to_string(),
+        message: message.into(),
+        detail: detail.into(),
+        sticky,
+    }
+}
+
+fn no_input_device_error() -> AudioErrorPayload {
+    audio_error(
+        "no_input_device",
+        "No microphone detected",
+        "Plug in or enable a microphone, then try again.",
+        true,
+    )
+}
+
+fn selected_input_unavailable_error(name: &str) -> AudioErrorPayload {
+    audio_error(
+        "selected_input_unavailable",
+        "Selected microphone unavailable",
+        format!("Plug in \"{name}\" or choose another input device."),
+        true,
+    )
+}
+
+fn input_stream_error(message: impl Into<String>, detail: impl Into<String>) -> AudioErrorPayload {
+    audio_error("input_stream_failed", message, detail, false)
 }
 
 /// Coordinator loop: owns the cpal stream and turns Start/Stop into a captured,
@@ -123,7 +199,7 @@ pub fn run(app: AppHandle, rx: Receiver<SessionEvent>) {
                     }
                 }
             }
-            SessionEvent::Start => {
+            SessionEvent::Start { recording } => {
                 let device = app
                     .state::<SettingsState>()
                     .0
@@ -131,6 +207,15 @@ pub fn run(app: AppHandle, rx: Receiver<SessionEvent>) {
                     .unwrap()
                     .audio_device
                     .clone();
+                if let Some(error) = input_device_problem(device.as_deref()) {
+                    eprintln!("[audio] {}", error.message);
+                    emit_audio_error(&app, &error);
+                    recording.store(false, Ordering::SeqCst);
+                    capturing.store(false, Ordering::SeqCst);
+                    let _ = app.emit("trigger:stop", ());
+                    let _ = app.emit("pill:state", "error");
+                    continue;
+                }
                 // Build the stream once, or rebuild only if the user picked a
                 // different input device. The stream then runs for the app's
                 // lifetime — we never stop it, so the mic never makes a sound.
@@ -143,10 +228,14 @@ pub fn run(app: AppHandle, rx: Receiver<SessionEvent>) {
                     // the OS can release the old endpoint cleanly.
                     capturing.store(false, Ordering::SeqCst);
                     active = None;
-                    match start_stream(device, capturing.clone()) {
+                    match start_stream(app.clone(), device, capturing.clone(), recording.clone()) {
                         Ok(a) => active = Some(a),
                         Err(e) => {
-                            eprintln!("[audio] failed to start capture: {e}");
+                            eprintln!("[audio] failed to start capture: {}", e.detail);
+                            emit_audio_error(&app, &e);
+                            recording.store(false, Ordering::SeqCst);
+                            capturing.store(false, Ordering::SeqCst);
+                            let _ = app.emit("trigger:stop", ());
                             let _ = app.emit("pill:state", "error");
                             continue;
                         }
@@ -268,7 +357,12 @@ pub fn run(app: AppHandle, rx: Receiver<SessionEvent>) {
 /// Open `device_name` (or the system default) and start a stream that records
 /// into a mono buffer whenever `capturing` is set. The stream runs continuously;
 /// the flag — not stopping the stream — is what gates a recording.
-fn start_stream(device_name: Option<String>, capturing: Arc<AtomicBool>) -> Result<Active, String> {
+fn start_stream(
+    app: AppHandle,
+    device_name: Option<String>,
+    capturing: Arc<AtomicBool>,
+    recording: Arc<AtomicBool>,
+) -> Result<Active, AudioErrorPayload> {
     // Remember what was requested so the coordinator can detect device changes.
     let requested = device_name.clone();
     let host = cpal::default_host();
@@ -281,18 +375,15 @@ fn start_stream(device_name: Option<String>, capturing: Arc<AtomicBool>) -> Resu
             match selected {
                 Some(device) => (device, false),
                 None => (
-                    host.default_input_device().ok_or_else(|| {
-                        format!(
-                            "selected input device '{name}' is unavailable and no default input device exists"
-                        )
-                    })?,
+                    host.default_input_device()
+                        .ok_or_else(|| selected_input_unavailable_error(&name))?,
                     true,
                 ),
             }
         }
         None => (
             host.default_input_device()
-                .ok_or("no default input device")?,
+                .ok_or_else(no_input_device_error)?,
             false,
         ),
     };
@@ -304,7 +395,9 @@ fn start_stream(device_name: Option<String>, capturing: Arc<AtomicBool>) -> Resu
         );
     }
 
-    let config = device.default_input_config().map_err(|e| e.to_string())?;
+    let config = device
+        .default_input_config()
+        .map_err(|e| input_stream_error("Microphone configuration failed", e.to_string()))?;
     let in_rate = config.sample_rate().0;
     let channels = config.channels() as usize;
     let sample_format = config.sample_format();
@@ -313,9 +406,21 @@ fn start_stream(device_name: Option<String>, capturing: Arc<AtomicBool>) -> Resu
     let buf = buffer.clone();
     let stream_failed = Arc::new(AtomicBool::new(false));
     let failed = stream_failed.clone();
-    let err_fn = move |e| {
+    let app_for_error = app.clone();
+    let recording_for_error = recording.clone();
+    let err_fn = move |e: cpal::StreamError| {
         eprintln!("[audio] stream error: {e}");
         failed.store(true, Ordering::SeqCst);
+        recording_for_error.store(false, Ordering::SeqCst);
+        let error = audio_error(
+            "input_stream_lost",
+            "Microphone disconnected",
+            e.to_string(),
+            true,
+        );
+        emit_audio_error(&app_for_error, &error);
+        let _ = app_for_error.emit("trigger:stop", ());
+        let _ = app_for_error.emit("pill:state", "error");
     };
     let cfg: cpal::StreamConfig = config.into();
 
@@ -367,11 +472,18 @@ fn start_stream(device_name: Option<String>, capturing: Arc<AtomicBool>) -> Resu
                 None,
             )
         }
-        other => return Err(format!("unsupported sample format: {other:?}")),
+        other => {
+            return Err(input_stream_error(
+                "Microphone format unsupported",
+                format!("unsupported sample format: {other:?}"),
+            ))
+        }
     }
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| input_stream_error("Microphone could not start", e.to_string()))?;
 
-    stream.play().map_err(|e| e.to_string())?;
+    stream
+        .play()
+        .map_err(|e| input_stream_error("Microphone could not start", e.to_string()))?;
     Ok(Active {
         stream,
         buffer,
