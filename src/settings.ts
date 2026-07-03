@@ -50,6 +50,7 @@ interface ModelInfo {
   id: string;
   label: string;
   size_mb: number;
+  engine: "whisper" | "medasr";
   downloaded: boolean;
 }
 
@@ -435,7 +436,18 @@ function transcriptionSection(): HTMLElement {
     settings.language = lang.value;
     await persist();
   };
-  s.appendChild(row("Language", lang));
+  // MedASR is English-only, so the language picker doesn't apply to it.
+  const activeEngine = models.find((m) => m.id === settings.model)?.engine;
+  const langRow = row(
+    "Language",
+    lang,
+    activeEngine === "medasr" ? "MedASR is English-only" : undefined,
+  );
+  if (activeEngine === "medasr") {
+    lang.disabled = true;
+    langRow.classList.add("disabled");
+  }
+  s.appendChild(langRow);
 
   return s;
 }
@@ -451,6 +463,13 @@ function modelRow(m: ModelInfo): HTMLElement {
   const name = document.createElement("span");
   name.className = "model-name";
   name.textContent = m.label;
+  // Specialty models get a small badge so they stand apart from generic Whisper.
+  if (m.engine === "medasr") {
+    const tag = document.createElement("span");
+    tag.className = "model-tag";
+    tag.textContent = "Medical · English";
+    name.appendChild(tag);
+  }
   const size = document.createElement("span");
   size.className = "model-size";
   size.textContent = m.size_mb >= 1024

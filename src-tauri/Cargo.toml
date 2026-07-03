@@ -34,6 +34,15 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 # Text injection: set the clipboard (arboard) and synthesize Ctrl+V (enigo).
 arboard = "3"
 enigo = "0.6"
+# MedASR medical model: ONNX Runtime inference (CPU EP — the model is small and
+# fast, and this keeps a second CUDA consumer out of the process). `download-
+# binaries` fetches a prebuilt onnxruntime so no system install is required.
+ort = { version = "=2.0.0-rc.10", default-features = false, features = ["std", "download-binaries"] }
+# SentencePiece/Unigram detokenization for MedASR's CTC output. default-features
+# off to drop the http/progressbar pulls — we only load a local tokenizer.json.
+tokenizers = { version = "0.21", default-features = false, features = ["onig"] }
+# Zero-copy reads of the MedASR n-gram LM (medasr-lm.bin, ~450 MB on disk).
+memmap2 = "0.9"
 
 [target.'cfg(windows)'.dependencies]
 # Local transcription on NVIDIA GPUs (whisper.cpp CUDA). CUDA targets are

@@ -314,6 +314,11 @@ body {
   font-weight: 400;
   color: var(--vp-muted);
 }
+/* Row whose control doesn't apply right now (e.g. language when the active
+   model is English-only). The control itself is also disabled in JS. */
+.row.disabled {
+  opacity: 0.55;
+}
 .notice {
   margin: 12px 0 2px;
   padding: 11px 12px;
@@ -580,6 +585,18 @@ body {
 .model-size {
   font-size: 12px;
   color: var(--vp-muted);
+}
+/* Specialty-model badge (e.g. "Medical · English" on MedASR) */
+.model-tag {
+  margin-left: 8px;
+  padding: 1px 7px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--vp-muted);
+  border: 1px solid var(--vp-border);
+  border-radius: 999px;
+  vertical-align: 1px;
+  white-space: nowrap;
 }
 .model-actions {
   display: flex;

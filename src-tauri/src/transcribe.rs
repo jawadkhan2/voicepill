@@ -10,15 +10,24 @@ use std::path::PathBuf;
 
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
+use crate::medasr::MedAsrBackend;
+use crate::models::{engine_of, Engine};
+
+/// Front door for transcription. Routes each model id to its engine: Whisper
+/// (ggml/whisper.cpp, GPU where available) or MedASR (ONNX/CPU). The audio
+/// coordinator talks only to this type and never has to know which engine runs.
 pub struct Transcriber {
     models_dir: PathBuf,
-    /// (model id, loaded context). `None` until the first transcription.
+    /// Whisper: (model id, loaded context). `None` until the first transcription.
     loaded: Option<(String, WhisperContext)>,
+    /// MedASR backend (ONNX). Owns its own lazy-loaded session.
+    medasr: MedAsrBackend,
 }
 
 impl Transcriber {
     pub fn new(models_dir: PathBuf) -> Self {
         Transcriber {
+            medasr: MedAsrBackend::new(models_dir.clone()),
             models_dir,
             loaded: None,
         }
@@ -28,15 +37,22 @@ impl Transcriber {
         self.models_dir.join(format!("ggml-{id}.bin"))
     }
 
-    /// Whether the context for `id` is already resident.
+    /// Whether the model for `id` is already resident on its engine.
     pub fn is_loaded(&self, id: &str) -> bool {
-        self.loaded.as_ref().map(|(m, _)| m == id).unwrap_or(false)
+        match engine_of(id) {
+            Engine::MedAsr => self.medasr.is_loaded(id),
+            Engine::Whisper => self.loaded.as_ref().map(|(m, _)| m == id).unwrap_or(false),
+        }
     }
 
-    /// Ensure the context for `id` is loaded (reloading if the model changed).
-    /// `pub` so the audio coordinator can preload a model into VRAM on demand
-    /// (when the user clicks "Use") rather than lazily on first transcription.
+    /// Ensure the model for `id` is loaded (reloading if the model changed).
+    /// `pub` so the audio coordinator can preload a model on demand (when the
+    /// user clicks "Use") rather than lazily on first transcription.
     pub fn ensure_loaded(&mut self, id: &str) -> Result<(), String> {
+        if let Engine::MedAsr = engine_of(id) {
+            return self.medasr.ensure_loaded(id);
+        }
+
         let already = self.loaded.as_ref().map(|(m, _)| m == id).unwrap_or(false);
         if already {
             return Ok(());
@@ -64,6 +80,12 @@ impl Transcriber {
         language: &str,
         audio: &[f32],
     ) -> Result<String, String> {
+        // MedASR runs on its own ONNX backend; the language hint is unused
+        // (English-only model).
+        if let Engine::MedAsr = engine_of(model_id) {
+            return self.medasr.transcribe(model_id, audio);
+        }
+
         self.ensure_loaded(model_id)?;
         let ctx = &self.loaded.as_ref().unwrap().1;
 

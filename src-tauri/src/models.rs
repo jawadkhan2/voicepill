@@ -1,7 +1,9 @@
-//! Whisper model catalog + downloader.
+//! Model catalog + downloader.
 //!
-//! ggml models are pulled on demand from the official `ggerganov/whisper.cpp`
-//! repo on Hugging Face and stored as `ggml-<id>.bin` in the app data dir.
+//! Two engines are offered. Whisper (ggml) models are pulled from the official
+//! `ggerganov/whisper.cpp` repo on Hugging Face and stored as `ggml-<id>.bin`.
+//! MedASR (a Google LASR Conformer-CTC model, exported to ONNX) is pulled from a
+//! VoicePill GitHub release and stored as `<id>.onnx` + `<id>-tokenizer.json`.
 //! Downloads run on a background thread and stream progress to the UI via
 //! `model:progress` / `model:done` / `model:error` events.
 
@@ -11,48 +13,107 @@ use std::path::PathBuf;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
+/// Which inference backend a model runs on.
+#[derive(Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Engine {
+    Whisper,
+    MedAsr,
+}
+
 /// One entry in the built-in model catalog.
 struct ModelEntry {
     id: &'static str,
     label: &'static str,
     size_mb: u32,
+    engine: Engine,
 }
 
-/// Models offered in the picker, smallest → largest.
+/// Models offered in the picker, smallest → largest (Whisper), then specialty.
 const CATALOG: &[ModelEntry] = &[
     ModelEntry {
         id: "tiny",
         label: "Tiny",
         size_mb: 75,
+        engine: Engine::Whisper,
     },
     ModelEntry {
         id: "base",
         label: "Base",
         size_mb: 142,
+        engine: Engine::Whisper,
     },
     ModelEntry {
         id: "small",
         label: "Small",
         size_mb: 466,
+        engine: Engine::Whisper,
     },
     ModelEntry {
         id: "medium",
         label: "Medium",
         size_mb: 1536,
+        engine: Engine::Whisper,
     },
     ModelEntry {
         id: "large-v3-turbo",
         label: "Large v3 Turbo",
         size_mb: 1620,
+        engine: Engine::Whisper,
     },
     ModelEntry {
         id: "large-v3",
         label: "Large v3",
         size_mb: 3094,
+        engine: Engine::Whisper,
+    },
+    ModelEntry {
+        id: "medasr",
+        label: "MedASR (Medical · English)",
+        size_mb: 853,
+        engine: Engine::MedAsr,
     },
 ];
 
 const HF_BASE: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main";
+/// GitHub release hosting the MedASR ONNX + tokenizer assets.
+const MEDASR_BASE: &str = "https://github.com/jawadkhan2/voicepill/releases/download/medasr-v1";
+
+fn entry(id: &str) -> Option<&'static ModelEntry> {
+    CATALOG.iter().find(|m| m.id == id)
+}
+
+/// The inference engine for a model id (defaults to Whisper for unknown ids).
+pub fn engine_of(id: &str) -> Engine {
+    entry(id).map(|m| m.engine).unwrap_or(Engine::Whisper)
+}
+
+/// Files that make up a model on disk, as `(filename, download url)` pairs.
+/// Whisper is a single ggml blob; MedASR is an ONNX graph plus its tokenizer.
+fn files_for(m: &ModelEntry) -> Vec<(String, String)> {
+    match m.engine {
+        Engine::Whisper => vec![(
+            format!("ggml-{}.bin", m.id),
+            format!("{HF_BASE}/ggml-{}.bin", m.id),
+        )],
+        Engine::MedAsr => vec![
+            (
+                format!("{}.onnx", m.id),
+                format!("{MEDASR_BASE}/medasr.onnx"),
+            ),
+            (
+                format!("{}-tokenizer.json", m.id),
+                format!("{MEDASR_BASE}/medasr-tokenizer.json"),
+            ),
+            // 6-gram LM for beam-search decoding (~2% absolute WER win). The
+            // backend degrades to greedy decode if this file is missing.
+            (
+                format!("{}-lm.bin", m.id),
+                format!("{MEDASR_BASE}/medasr-lm.bin"),
+            ),
+        ],
+    }
+}
 
 /// Serialized to the UI: catalog entry + whether the file is on disk.
 #[derive(Serialize)]
@@ -60,6 +121,7 @@ pub struct ModelInfo {
     id: String,
     label: String,
     size_mb: u32,
+    engine: Engine,
     downloaded: bool,
 }
 
@@ -70,10 +132,6 @@ fn models_dir(app: &AppHandle) -> Result<PathBuf, String> {
         .map_err(|e| e.to_string())?
         .join("models");
     Ok(dir)
-}
-
-fn model_file(app: &AppHandle, id: &str) -> Result<PathBuf, String> {
-    Ok(models_dir(app)?.join(format!("ggml-{id}.bin")))
 }
 
 fn is_known(id: &str) -> bool {
@@ -88,6 +146,15 @@ pub fn validate_id(id: &str) -> Result<(), String> {
     }
 }
 
+/// Whether every file that makes up `id` is present on disk.
+fn is_downloaded(app: &AppHandle, m: &ModelEntry) -> bool {
+    let dir = match models_dir(app) {
+        Ok(d) => d,
+        Err(_) => return false,
+    };
+    files_for(m).iter().all(|(name, _)| dir.join(name).exists())
+}
+
 /// List the catalog with on-disk status for each model.
 pub fn list(app: &AppHandle) -> Vec<ModelInfo> {
     CATALOG
@@ -96,17 +163,22 @@ pub fn list(app: &AppHandle) -> Vec<ModelInfo> {
             id: m.id.to_string(),
             label: m.label.to_string(),
             size_mb: m.size_mb,
-            downloaded: model_file(app, m.id).map(|p| p.exists()).unwrap_or(false),
+            engine: m.engine,
+            downloaded: is_downloaded(app, m),
         })
         .collect()
 }
 
-/// Delete a downloaded model file.
+/// Delete all files for a downloaded model.
 pub fn delete(app: &AppHandle, id: &str) -> Result<(), String> {
     validate_id(id)?;
-    let path = model_file(app, id)?;
-    if path.exists() {
-        std::fs::remove_file(&path).map_err(|e| e.to_string())?;
+    let m = entry(id).ok_or_else(|| format!("unknown model: {id}"))?;
+    let dir = models_dir(app)?;
+    for (name, _) in files_for(m) {
+        let path = dir.join(&name);
+        if path.exists() {
+            std::fs::remove_file(&path).map_err(|e| e.to_string())?;
+        }
     }
     Ok(())
 }
@@ -116,15 +188,22 @@ pub fn delete(app: &AppHandle, id: &str) -> Result<(), String> {
 pub fn download(app: &AppHandle, id: String) -> Result<(), String> {
     validate_id(&id)?;
     let dir = models_dir(app)?;
-    let dest = model_file(app, &id)?;
-    let url = format!("{HF_BASE}/ggml-{id}.bin");
+    let m = entry(&id).ok_or_else(|| format!("unknown model: {id}"))?;
+    let files = files_for(m);
     let app = app.clone();
 
     std::thread::spawn(move || {
-        if let Err(e) = run_download(&app, &id, &url, &dir, &dest) {
-            eprintln!("[models] download '{id}' failed: {e}");
-            let _ = app.emit("model:error", serde_json::json!({ "id": id, "error": e }));
+        // Download every file that makes up the model (Whisper: one blob; MedASR:
+        // ONNX + tokenizer). A single `model:done` fires once all files land.
+        for (name, url) in &files {
+            let dest = dir.join(name);
+            if let Err(e) = run_download(&app, &id, url, &dir, &dest) {
+                eprintln!("[models] download '{id}' ({name}) failed: {e}");
+                let _ = app.emit("model:error", serde_json::json!({ "id": id, "error": e }));
+                return;
+            }
         }
+        let _ = app.emit("model:done", serde_json::json!({ "id": id }));
     });
     Ok(())
 }
@@ -155,12 +234,10 @@ fn run_download(
 
     for attempt in 1..=MAX_ATTEMPTS {
         match attempt_download(app, id, url, &client, &tmp) {
-            Ok(received) => {
+            Ok(_received) => {
                 std::fs::rename(&tmp, dest).map_err(|e| e.to_string())?;
-                let _ = app.emit(
-                    "model:done",
-                    serde_json::json!({ "id": id, "received": received }),
-                );
+                // Per-file success is silent; `download` emits one `model:done`
+                // once every file for the model has landed.
                 return Ok(());
             }
             Err(e) => {

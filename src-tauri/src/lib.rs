@@ -7,6 +7,8 @@ mod hidpp;
 mod history;
 mod inject;
 mod input_hook;
+mod medasr;
+mod medasr_lm;
 mod models;
 mod settings;
 mod transcribe;

@@ -319,9 +319,11 @@ pub fn run(app: AppHandle, rx: Receiver<SessionEvent>) {
                     Ok(text) => {
                         println!("[transcribe] {text:?}");
                         // Whisper output often has a leading space and no trailing
-                        // one. Normalize: trim, then add a single trailing space so
-                        // back-to-back dictations don't run together ("a.b" -> "a. b").
-                        let text = text.trim();
+                        // one. Normalize: trim spaces, then add a single trailing
+                        // space so back-to-back dictations don't run together
+                        // ("a.b" -> "a. b"). Newlines/tabs are kept — a lone
+                        // "next line" dictation is exactly "\n" and must paste.
+                        let text = text.trim_matches(' ');
                         if !text.is_empty() {
                             let saved = {
                                 let h = app.state::<TranscriptHistoryState>();
@@ -335,7 +337,13 @@ pub fn run(app: AppHandle, rx: Receiver<SessionEvent>) {
                                 }
                                 Err(e) => eprintln!("[transcript] failed to save history: {e}"),
                             }
-                            let to_paste = format!("{text} ");
+                            // No trailing space after a commanded line break /
+                            // tab — it would indent the next line.
+                            let to_paste = if text.ends_with(['\n', '\t']) {
+                                text.to_string()
+                            } else {
+                                format!("{text} ")
+                            };
                             if let Err(e) = crate::inject::paste_text(&to_paste, restore_clipboard)
                             {
                                 eprintln!("[inject] {e}");
