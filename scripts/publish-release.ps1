@@ -85,7 +85,8 @@ if (-not $Version) { $Version = $conf.version }
 Write-Host "Publishing VoicePill v$Version" -ForegroundColor Cyan
 
 if ($conf.version -ne $Version) {
-  Write-Host "Bumping version $($conf.version) -> $Version" -ForegroundColor Yellow
+  $oldVersion = $conf.version
+  Write-Host "Bumping version $oldVersion -> $Version" -ForegroundColor Yellow
 
   # tauri.conf.json — rewrite just the top-level "version" field.
   (Get-Content $confPath -Raw) `
@@ -111,12 +112,14 @@ if ($conf.version -ne $Version) {
   Add-Content $pkgPath ""  # keep trailing newline
 
   if (Test-Path $lockPath) {
-    $lock = Get-Content $lockPath -Raw | ConvertFrom-Json
-    $lock.version = $Version
-    if ($lock.packages -and $lock.packages.PSObject.Properties.Name -contains "") {
-      $lock.packages.PSObject.Properties[""].Value.version = $Version
-    }
-    ($lock | ConvertTo-Json -Depth 100) | Set-Content $lockPath
+    # npm lockfiles have a root package under the "" key, which ConvertFrom-Json
+    # rejects without -AsHashtable (and round-tripping reorders the file anyway).
+    # Patch the two version fields textually instead: the lockfile's own version
+    # and the root package's — both are the old app version.
+    $raw = Get-Content $lockPath -Raw
+    $pattern = '("version"\s*:\s*")' + [regex]::Escape($oldVersion) + '(")'
+    $raw = [regex]::new($pattern).Replace($raw, "`${1}$Version`${2}", 2)
+    Set-Content $lockPath $raw -NoNewline
   }
 }
 
