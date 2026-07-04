@@ -172,7 +172,7 @@ listen<{ id: string; received: number; total: number }>("model:progress", (e) =>
 listen<{ id: string }>("model:done", async (e) => {
   downloading.delete(e.payload.id);
   await refreshModels();
-  toast(`${modelLabel(e.payload.id)} downloaded`);
+  toast(`${modelLabel(e.payload.id)} downloaded`, 1600, "ok");
   // Auto-select the first model the user downloads (also loads it into VRAM).
   if (!settings.model) {
     await selectModel(e.payload.id);
@@ -185,7 +185,7 @@ listen<{ id: string; error: string }>("model:error", (e) => {
   downloading.delete(e.payload.id);
   downloadErrors.set(e.payload.id, e.payload.error);
   console.error("model download failed", e.payload.error);
-  toast("Download failed");
+  toast("Download failed", 1600, "err");
   render();
 });
 
@@ -204,7 +204,7 @@ listen<{ id: string; ms: number; gpu: GpuInfo }>("model:loaded", (e) => {
     e.payload.ms > 0 ? `Loaded in ${(e.payload.ms / 1000).toFixed(1)}s` : "Loaded on GPU",
   );
   if (e.payload.gpu) gpu = e.payload.gpu;
-  toast(`${modelLabel(e.payload.id)} ready`);
+  toast(`${modelLabel(e.payload.id)} ready`, 1600, "ok");
   render();
 });
 
@@ -212,13 +212,13 @@ listen<{ id: string; error: string }>("model:load-error", (e) => {
   loadingModels.delete(e.payload.id);
   loadErrors.set(e.payload.id, e.payload.error);
   console.error("model load failed", e.payload.error);
-  toast("Model load failed");
+  toast("Model load failed", 1600, "err");
   render();
 });
 
 listen<AudioError>("audio:error", (e) => {
   audioError = e.payload;
-  toast(e.payload.message);
+  toast(e.payload.message, 1600, "err");
   void refreshAudioDevices(false);
   render();
 });
@@ -332,6 +332,57 @@ function row(label: string, control: HTMLElement, hint?: string): HTMLElement {
   return r;
 }
 
+/** Segmented control with a thumb that slides beneath the active option.
+ *  The click handler updates classes/thumb locally (so the slide animates)
+ *  and then hands the new value to `onSelect` — callers must not re-render
+ *  the section in response, or the animation is destroyed mid-flight. */
+function segControl<T extends string>(
+  options: Array<[T, string]>,
+  current: T,
+  onSelect: (value: T) => void | Promise<void>,
+): HTMLElement {
+  const seg = document.createElement("div");
+  seg.className = "seg";
+  const thumb = document.createElement("div");
+  thumb.className = "seg-thumb";
+  seg.appendChild(thumb);
+
+  const moveThumb = (btn: HTMLElement, animate: boolean) => {
+    if (!animate) thumb.style.transition = "none";
+    thumb.style.width = `${btn.offsetWidth}px`;
+    thumb.style.transform = `translateX(${btn.offsetLeft}px)`;
+    if (!animate) {
+      void thumb.offsetWidth; // flush styles so later moves transition again
+      thumb.style.transition = "";
+    }
+  };
+
+  const buttons: HTMLButtonElement[] = [];
+  for (const [value, label] of options) {
+    const opt = document.createElement("button");
+    opt.type = "button";
+    opt.className = "seg-opt";
+    opt.textContent = label;
+    if (value === current) opt.classList.add("active");
+    opt.onclick = () => {
+      if (opt.classList.contains("active")) return;
+      for (const b of buttons) b.classList.toggle("active", b === opt);
+      moveThumb(opt, true);
+      void onSelect(value);
+    };
+    buttons.push(opt);
+    seg.appendChild(opt);
+  }
+
+  // Thumb needs layout to exist before it can be measured into place.
+  requestAnimationFrame(() => {
+    const active = buttons.find((b) => b.classList.contains("active"));
+    if (active) moveThumb(active, false);
+  });
+
+  return seg;
+}
+
 function notice(kind: "error" | "warning", title: string, detail: string): HTMLElement {
   const n = document.createElement("div");
   n.className = `notice ${kind}`;
@@ -382,33 +433,25 @@ function triggerSection(): HTMLElement {
   );
 
   // Mode toggle
-  const modeWrap = document.createElement("div");
-  modeWrap.className = "seg";
-  for (const [val, lbl] of [
-    ["push_to_talk", "Push to talk"],
-    ["toggle", "Toggle"],
-  ] as Array<[TriggerMode, string]>) {
-    const opt = document.createElement("button");
-    opt.className = "seg-opt";
-    opt.textContent = lbl;
-    if (settings.trigger_mode === val) opt.classList.add("active");
-    opt.onclick = async () => {
-      if (settings.trigger_mode === val) return;
+  const modeHint = (m: TriggerMode) =>
+    m === "push_to_talk"
+      ? "Hold to record, release to transcribe"
+      : "Click to start, click again to stop";
+  const modeSeg = segControl<TriggerMode>(
+    [
+      ["push_to_talk", "Push to talk"],
+      ["toggle", "Toggle"],
+    ],
+    settings.trigger_mode,
+    async (val) => {
       settings.trigger_mode = val;
+      const hint = modeRow.querySelector(".row-hint");
+      if (hint) hint.textContent = modeHint(val);
       await persist();
-      render();
-    };
-    modeWrap.appendChild(opt);
-  }
-  s.appendChild(
-    row(
-      "Mode",
-      modeWrap,
-      settings.trigger_mode === "push_to_talk"
-        ? "Hold to record, release to transcribe"
-        : "Click to start, click again to stop",
-    ),
+    },
   );
+  const modeRow = row("Mode", modeSeg, modeHint(settings.trigger_mode));
+  s.appendChild(modeRow);
 
   return s;
 }
@@ -717,27 +760,19 @@ function appearanceSection(): HTMLElement {
   const s = section("Appearance");
 
   // Theme — light / dark / system
-  const seg = document.createElement("div");
-  seg.className = "seg";
-  const themes: Array<[Theme, string]> = [
-    ["light", "Light"],
-    ["dark", "Dark"],
-    ["system", "System"],
-  ];
-  for (const [value, label] of themes) {
-    const opt = document.createElement("button");
-    opt.className = "seg-opt";
-    opt.textContent = label;
-    if (settings.theme === value) opt.classList.add("active");
-    opt.onclick = async () => {
-      if (settings.theme === value) return;
+  const seg = segControl<Theme>(
+    [
+      ["light", "Light"],
+      ["dark", "Dark"],
+      ["system", "System"],
+    ],
+    settings.theme,
+    async (value) => {
       settings.theme = value;
       previewAppearance();
       await persist();
-      render();
-    };
-    seg.appendChild(opt);
-  }
+    },
+  );
   s.appendChild(row("Theme", seg, "Light, dark, or follow your system"));
 
   // Pill size
@@ -826,7 +861,7 @@ function generalSection(): HTMLElement {
           await persist();
         } catch (e) {
           settings.autostart = previous;
-          toast(`Start on boot failed: ${e}`);
+          toast(`Start on boot failed: ${e}`, 1600, "err");
           render();
         }
       }),

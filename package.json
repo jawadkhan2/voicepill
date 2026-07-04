@@ -1,6 +1,6 @@
 {
   "name": "voicepill",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Local voice transcription pill for the desktop",
   "type": "module",
   "scripts": {

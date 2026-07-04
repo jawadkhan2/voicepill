@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>VoicePill — Final Theme (Ink buttons)</title>
+<style>
+  :root,[data-theme="dark"] {
+    --bg:#17171c; --fg:#ececf1; --muted:#9494a3;
+    --surface:#202028; --surface-2:#2a2a34; --surface-3:#34343f;
+    --border:rgba(255,255,255,.10); --border-strong:rgba(255,255,255,.16);
+    --hairline:rgba(255,255,255,.06); --switch-off:#3a3a46;
+    --shadow:0 10px 30px rgba(0,0,0,.45);
+    --red:#e5484d; --red-soft:rgba(229,72,77,.14); --red-soft-bd:rgba(229,72,77,.40); --on-red:#fff;
+  }
+  [data-theme="light"] {
+    --bg:#f4f4f7; --fg:#1b1b22; --muted:#6c6c7a;
+    --surface:#fff; --surface-2:#ececf1; --surface-3:#e1e1e9;
+    --border:rgba(0,0,0,.12); --border-strong:rgba(0,0,0,.20);
+    --hairline:rgba(0,0,0,.07); --switch-off:#c7c7d2;
+    --shadow:0 10px 28px rgba(0,0,0,.12);
+    --red:#e5484d; --red-soft:rgba(229,72,77,.12); --red-soft-bd:rgba(229,72,77,.35); --on-red:#fff;
+  }
+  * { box-sizing: border-box; }
+  html,body { margin:0; padding:0; }
+  body {
+    background:var(--bg); color:var(--fg);
+    font-family:"Segoe UI",system-ui,-apple-system,sans-serif; line-height:1.5;
+    padding-bottom:80px; transition:background .2s,color .2s;
+  }
+  .page-head {
+    position:sticky; top:0; z-index:50;
+    background:color-mix(in srgb,var(--bg) 85%,transparent); backdrop-filter:blur(12px);
+    border-bottom:1px solid var(--hairline); padding:18px 32px;
+    display:flex; align-items:center; justify-content:space-between; gap:24px;
+  }
+  .page-head h1 { margin:0; font-size:19px; }
+  .page-head p { margin:4px 0 0; color:var(--muted); font-size:13px; }
+  .theme-toggle { display:inline-flex; background:var(--surface-2); border:1px solid var(--border); border-radius:9px; overflow:hidden; }
+  .theme-toggle button { background:transparent; border:none; color:var(--muted); padding:7px 14px; font-size:13px; font-weight:600; cursor:pointer; }
+  .theme-toggle button.on { background:var(--red); color:var(--on-red); }
+  .wrap { max-width:1040px; margin:0 auto; padding:28px 32px; }
+
+  /* ---------- buttons: E (ink) ---------- */
+  .btn {
+    appearance:none; border:1px solid transparent; border-radius:9px;
+    padding:9px 18px; font-size:13px; font-weight:600; cursor:pointer;
+    display:inline-flex; align-items:center; gap:7px;
+    transition:background .14s,border-color .14s,color .14s,transform .1s;
+  }
+  .btn:active { transform:translateY(1px); }
+  .btn-primary { background:var(--fg); color:var(--bg); }
+  .btn-primary:hover { background:color-mix(in srgb,var(--fg) 86%,var(--muted)); }
+  .btn-secondary { background:var(--surface-2); color:var(--fg); border-color:var(--border); }
+  .btn-secondary:hover { background:var(--surface-3); }
+  .btn svg { width:15px; height:15px; }
+
+  .compose { display:grid; grid-template-columns:1fr 1fr; gap:24px; }
+  @media (max-width:880px){ .compose{ grid-template-columns:1fr; } }
+
+  .mini { border-radius:16px; overflow:hidden; border:1px solid var(--border-strong); box-shadow:var(--shadow); }
+  .mini.dark {
+    --bg:#17171c; --fg:#ececf1; --muted:#9494a3; --surface:#202028; --surface-2:#2a2a34;
+    --surface-3:#34343f; --border:rgba(255,255,255,.10); --border-strong:rgba(255,255,255,.16);
+    --hairline:rgba(255,255,255,.06); --switch-off:#3a3a46; --shadow:0 10px 30px rgba(0,0,0,.45);
+    --red:#e5484d; --red-soft:rgba(229,72,77,.14); --red-soft-bd:rgba(229,72,77,.4); --on-red:#fff; color:#ececf1;
+  }
+  .mini.light {
+    --bg:#f4f4f7; --fg:#1b1b22; --muted:#6c6c7a; --surface:#fff; --surface-2:#ececf1;
+    --surface-3:#e1e1e9; --border:rgba(0,0,0,.12); --border-strong:rgba(0,0,0,.20);
+    --hairline:rgba(0,0,0,.07); --switch-off:#c7c7d2; --shadow:0 10px 28px rgba(0,0,0,.12);
+    --red:#e5484d; --red-soft:rgba(229,72,77,.12); --red-soft-bd:rgba(229,72,77,.35); --on-red:#fff; color:#1b1b22;
+  }
+  .frame { background:var(--bg); padding:18px; }
+  .mini-head { display:flex; align-items:center; justify-content:space-between; padding-bottom:12px; margin-bottom:14px; border-bottom:1px solid var(--hairline); }
+  .brand { display:flex; align-items:center; gap:8px; font-weight:700; font-size:15px; }
+  .brand b { color:var(--red); }
+  .mlabel { font-size:11px; text-transform:uppercase; letter-spacing:1px; color:var(--muted); }
+
+  .card { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:4px 16px; margin-bottom:14px; }
+  .card-title { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.6px; color:var(--muted); margin:14px 0 6px; }
+  .crow { display:flex; align-items:center; justify-content:space-between; gap:14px; padding:12px 0; border-top:1px solid var(--hairline); }
+  .card-title + .crow { border-top:none; }
+  .lab { font-size:13px; font-weight:500; }
+  .hint { font-size:11px; color:var(--muted); margin-top:2px; }
+
+  .seg { display:inline-flex; background:var(--surface-2); border:1px solid var(--border); border-radius:8px; overflow:hidden; }
+  .seg button { background:transparent; border:none; color:var(--muted); padding:6px 12px; font-size:12px; font-weight:600; cursor:pointer; }
+  .seg button.on { background:var(--red); color:var(--on-red); }
+  .switch { position:relative; width:42px; height:23px; }
+  .switch input { display:none; }
+  .track { position:absolute; inset:0; background:var(--switch-off); border-radius:999px; transition:background .2s; }
+  .track::before { content:""; position:absolute; width:17px; height:17px; left:3px; top:3px; background:#fff; border-radius:50%; transition:transform .2s; }
+  .switch input:checked + .track { background:var(--red); }
+  .switch input:checked + .track::before { transform:translateX(19px); }
+
+  .hitem { background:var(--surface); border:1px solid var(--border); border-left:3px solid var(--red); border-radius:10px; padding:13px 14px; margin-bottom:12px; }
+  .hitem p { margin:0 0 12px; font-size:13px; line-height:1.45; }
+  .acts { display:flex; align-items:center; gap:8px; }
+  .time { margin-left:auto; font-size:11px; color:var(--muted); }
+
+  .pills { display:flex; gap:14px; align-items:center; flex-wrap:wrap; margin-top:4px; }
+  .pill { display:inline-flex; align-items:center; gap:9px; padding:8px 15px 8px 12px; border-radius:999px; background:var(--surface); border:1px solid var(--border-strong); font-size:12px; font-weight:600; box-shadow:inset 0 1px 0 rgba(255,255,255,.05); }
+  .dot { width:11px; height:11px; border-radius:50%; background:var(--red); }
+  .pill.idle .dot { box-shadow:0 0 0 4px var(--red-soft); }
+  .pill.live { border-color:var(--red); animation:glow 1.8s ease-in-out infinite; }
+  .pill.live .dot { animation:blink 1s ease-in-out infinite; }
+  @keyframes glow { 0%,100%{box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 0 0 0 transparent;} 50%{box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 0 18px 1px var(--red-soft-bd);} }
+  @keyframes blink { 0%,100%{opacity:1;} 50%{opacity:.35;} }
+  .wave { display:inline-flex; gap:3px; align-items:center; height:16px; }
+  .wave i { width:3px; height:6px; border-radius:2px; background:var(--red); animation:w .9s ease-in-out infinite; }
+  .wave i:nth-child(2){animation-delay:.1s} .wave i:nth-child(3){animation-delay:.2s}
+  .wave i:nth-child(4){animation-delay:.3s} .wave i:nth-child(5){animation-delay:.4s}
+  @keyframes w { 0%,100%{height:6px} 50%{height:15px} }
+
+  .footer-actions { display:flex; gap:10px; margin-top:16px; padding-top:14px; border-top:1px solid var(--hairline); }
+</style>
+</head>
+<body>
+  <div class="page-head">
+    <div>
+      <h1>VoicePill — Final Theme</h1>
+      <p>Ink primary buttons (variant E). Dark + light, one red accent for the mic only.</p>
+    </div>
+    <div class="theme-toggle">
+      <button id="t-dark" class="on" onclick="setTheme('dark')">Dark</button>
+      <button id="t-light" onclick="setTheme('light')">Light</button>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <div class="compose">
+
+      <!-- DARK -->
+      <div class="mini dark">
+        <div class="frame">
+          <div class="mini-head"><div class="brand"><span>Voice<b>Pill</b></span></div><div class="mlabel">Dark</div></div>
+
+          <div class="card">
+            <div class="card-title">Appearance</div>
+            <div class="crow">
+              <div><div class="lab">Theme</div><div class="hint">Light, dark, or follow system</div></div>
+              <div class="seg"><button>System</button><button class="on">Dark</button><button>Light</button></div>
+            </div>
+            <div class="crow">
+              <div><div class="lab">Start with Windows</div><div class="hint">Launch VoicePill at login</div></div>
+              <label class="switch"><input type="checkbox" checked><span class="track"></span></label>
+            </div>
+          </div>
+
+          <div class="hitem">
+            <p>Send the updated mockups to the team and ask which button variant feels right.</p>
+            <div class="acts">
+              <button class="btn btn-primary">Copy</button>
+              <button class="btn btn-secondary">Paste</button>
+              <span class="time">2:14 PM</span>
+            </div>
+          </div>
+
+          <div class="pills">
+            <span class="pill idle"><span class="dot"></span> Ready</span>
+            <span class="pill live"><span class="wave"><i></i><i></i><i></i><i></i><i></i></span> Listening</span>
+          </div>
+
+          <div class="footer-actions">
+            <button class="btn btn-primary">Download</button>
+            <button class="btn btn-secondary">Delete</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- LIGHT -->
+      <div class="mini light">
+        <div class="frame">
+          <div class="mini-head"><div class="brand"><span>Voice<b>Pill</b></span></div><div class="mlabel">Light</div></div>
+
+          <div class="card">
+            <div class="card-title">Appearance</div>
+            <div class="crow">
+              <div><div class="lab">Theme</div><div class="hint">Light, dark, or follow system</div></div>
+              <div class="seg"><button>System</button><button>Dark</button><button class="on">Light</button></div>
+            </div>
+            <div class="crow">
+              <div><div class="lab">Start with Windows</div><div class="hint">Launch VoicePill at login</div></div>
+              <label class="switch"><input type="checkbox" checked><span class="track"></span></label>
+            </div>
+          </div>
+
+          <div class="hitem">
+            <p>Send the updated mockups to the team and ask which button variant feels right.</p>
+            <div class="acts">
+              <button class="btn btn-primary">Copy</button>
+              <button class="btn btn-secondary">Paste</button>
+              <span class="time">2:14 PM</span>
+            </div>
+          </div>
+
+          <div class="pills">
+            <span class="pill idle"><span class="dot"></span> Ready</span>
+            <span class="pill live"><span class="wave"><i></i><i></i><i></i><i></i><i></i></span> Listening</span>
+          </div>
+
+          <div class="footer-actions">
+            <button class="btn btn-primary">Download</button>
+            <button class="btn btn-secondary">Delete</button>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <script>
+    function setTheme(t){
+      document.documentElement.setAttribute('data-theme',t);
+      document.getElementById('t-dark').classList.toggle('on',t==='dark');
+      document.getElementById('t-light').classList.toggle('on',t==='light');
+    }
+  </script>
+</body>
+</html>

@@ -18,6 +18,9 @@ const win = getCurrentWindow();
 let transcripts: TranscriptEntry[] = [];
 let copiedId: string | null = null;
 let copiedReset: number | undefined;
+// First real render gets a staggered entrance; later re-renders (copy state,
+// refreshes) must not re-animate the list.
+let entrancePlayed = false;
 
 /** Mount the history view; returns a `refresh` the host can call (e.g. on focus). */
 export function initHistory(): { refresh: (force?: boolean) => Promise<void> } {
@@ -84,6 +87,7 @@ function render() {
 
   // Insert a day separator whenever the calendar day changes down the list.
   let lastDay = "";
+  let index = 0;
   for (const entry of transcripts) {
     const day = dayKey(entry.created_at_ms);
     if (day !== lastDay) {
@@ -93,8 +97,15 @@ function render() {
       sep.textContent = dayLabel(entry.created_at_ms);
       root.appendChild(sep);
     }
-    root.appendChild(transcriptRow(entry));
+    const item = transcriptRow(entry);
+    if (!entrancePlayed) {
+      item.classList.add("enter");
+      item.style.animationDelay = `${Math.min(index, 8) * 50}ms`;
+    }
+    root.appendChild(item);
+    index++;
   }
+  entrancePlayed = true;
 }
 
 function transcriptRow(entry: TranscriptEntry): HTMLElement {
@@ -126,7 +137,7 @@ function transcriptRow(entry: TranscriptEntry): HTMLElement {
   copy.onclick = async () => {
     await invoke("copy_transcript", { text: entry.text });
     copiedId = entry.id;
-    toast("Copied to clipboard");
+    toast("Copied to clipboard", 1600, "ok");
     window.clearTimeout(copiedReset);
     copiedReset = window.setTimeout(() => {
       copiedId = null;
@@ -141,7 +152,7 @@ function transcriptRow(entry: TranscriptEntry): HTMLElement {
   paste.textContent = "Paste";
   paste.onclick = async () => {
     await invoke("paste_transcript", { text: entry.text });
-    toast("Pasted");
+    toast("Pasted", 1600, "ok");
   };
 
   const buttons = document.createElement("div");

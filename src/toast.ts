@@ -3,6 +3,8 @@
 
 let host: HTMLElement | null = null;
 
+export type ToastKind = "info" | "ok" | "err";
+
 function ensureHost(): HTMLElement {
   if (host) return host;
   host = document.createElement("div");
@@ -11,15 +13,25 @@ function ensureHost(): HTMLElement {
   return host;
 }
 
-/** Show a transient toast. `ms` is the on-screen time before it fades out. */
-export function toast(message: string, ms = 1600): void {
+const ICONS: Record<Exclude<ToastKind, "info">, string> = {
+  ok: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12l6 6L20 6"/></svg>',
+  err: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+};
+
+/** Show a transient toast. `ms` is the on-screen time before it fades out.
+ *  `kind` picks the leading glyph: neutral dot, success check, or error cross. */
+export function toast(message: string, ms = 1600, kind: ToastKind = "info"): void {
   const h = ensureHost();
 
   const el = document.createElement("div");
-  el.className = "toast";
-  const dot = document.createElement("span");
-  dot.className = "dot";
-  el.appendChild(dot);
+  el.className = kind === "info" ? "toast" : `toast ${kind}`;
+  if (kind === "info") {
+    const dot = document.createElement("span");
+    dot.className = "dot";
+    el.appendChild(dot);
+  } else {
+    el.innerHTML = ICONS[kind];
+  }
   el.appendChild(document.createTextNode(message));
   h.appendChild(el);
 

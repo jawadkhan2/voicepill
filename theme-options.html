@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>VoicePill — Theme & Button Picker</title>
+<style>
+  /* ============================================================
+     TOKENS
+     Two cohesive palettes: dark (default) + light.
+     Red is reserved as the live/record accent (mic, listening).
+     Everything else is a calm neutral so the app reads as one piece.
+     ============================================================ */
+  :root,
+  [data-theme="dark"] {
+    --bg:          #17171c;
+    --fg:          #ececf1;
+    --muted:       #9494a3;
+    --surface:     #202028;  /* cards */
+    --surface-2:   #2a2a34;  /* raised: secondary buttons, inputs */
+    --surface-3:   #34343f;  /* hover on raised */
+    --border:      rgba(255,255,255,0.10);
+    --border-strong: rgba(255,255,255,0.16);
+    --hairline:    rgba(255,255,255,0.06);
+    --switch-off:  #3a3a46;
+    --shadow:      0 10px 30px rgba(0,0,0,0.45);
+
+    /* the one accent: classic mic red */
+    --red:         #e5484d;
+    --red-hover:   #ef5a5f;
+    --red-press:   #d23a3f;
+    --red-soft:    rgba(229,72,77,0.14);   /* tint fill */
+    --red-soft-bd: rgba(229,72,77,0.40);
+    --on-red:      #ffffff;
+  }
+  [data-theme="light"] {
+    --bg:          #f4f4f7;
+    --fg:          #1b1b22;
+    --muted:       #6c6c7a;
+    --surface:     #ffffff;
+    --surface-2:   #ececf1;
+    --surface-3:   #e1e1e9;
+    --border:      rgba(0,0,0,0.12);
+    --border-strong: rgba(0,0,0,0.20);
+    --hairline:    rgba(0,0,0,0.07);
+    --switch-off:  #c7c7d2;
+    --shadow:      0 10px 28px rgba(0,0,0,0.12);
+
+    --red:         #e5252b;
+    --red-hover:   #cf2025;
+    --red-press:   #b81b20;
+    --red-soft:    rgba(229,37,43,0.10);
+    --red-soft-bd: rgba(229,37,43,0.35);
+    --on-red:      #ffffff;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    line-height: 1.5;
+    padding-bottom: 120px;
+    transition: background .2s ease, color .2s ease;
+  }
+
+  .page-head {
+    position: sticky; top: 0; z-index: 50;
+    background: color-mix(in srgb, var(--bg) 85%, transparent);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--hairline);
+    padding: 18px 32px;
+    display: flex; align-items: center; justify-content: space-between; gap: 24px;
+  }
+  .page-head h1 { margin: 0; font-size: 19px; }
+  .page-head p { margin: 4px 0 0; color: var(--muted); font-size: 13px; max-width: 560px; }
+  .wrap { max-width: 1000px; margin: 0 auto; padding: 28px 32px; }
+
+  .group-title {
+    font-size: 12px; text-transform: uppercase; letter-spacing: 1px;
+    color: var(--muted); font-weight: 700;
+    margin: 44px 0 16px; padding-bottom: 8px;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .group-title:first-of-type { margin-top: 8px; }
+  .note { color: var(--muted); font-size: 13px; margin: -6px 0 18px; }
+
+  /* theme toggle in the header */
+  .theme-toggle {
+    display: inline-flex; background: var(--surface-2);
+    border: 1px solid var(--border); border-radius: 9px; overflow: hidden;
+  }
+  .theme-toggle button {
+    background: transparent; border: none; color: var(--muted);
+    padding: 7px 14px; font-size: 13px; font-weight: 600; cursor: pointer;
+  }
+  .theme-toggle button.on { background: var(--red); color: var(--on-red); }
+
+  /* ---- variant card ---- */
+  .variants { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 760px) { .variants { grid-template-columns: 1fr; } }
+  .vcard {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 18px 18px 20px;
+  }
+  .vcard h3 { margin: 0 0 2px; font-size: 14px; }
+  .vcard .desc { margin: 0 0 16px; color: var(--muted); font-size: 12px; }
+  .demo-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .demo-sep { height: 1px; background: var(--hairline); margin: 16px 0; }
+
+  /* ============================================================
+     BUTTON BASE  (flat, no gradient, no heavy shadow)
+     ============================================================ */
+  .btn {
+    appearance: none; border: 1px solid transparent;
+    border-radius: 9px; padding: 9px 18px;
+    font-size: 13px; font-weight: 600; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 7px;
+    transition: background .14s ease, border-color .14s ease, color .14s ease, transform .1s ease;
+  }
+  .btn:active { transform: translateY(1px); }
+
+  /* --- A. Monochrome: red reserved for mic, actions are neutral --- */
+  .a-primary {
+    background: var(--surface-3); color: var(--fg);
+    border-color: var(--border-strong);
+  }
+  .a-primary:hover { background: var(--surface-2); border-color: var(--border-strong); }
+  .a-secondary {
+    background: transparent; color: var(--fg);
+    border-color: var(--border-strong);
+  }
+  .a-secondary:hover { background: var(--surface-2); }
+
+  /* --- B. Solid red primary / solid neutral secondary --- */
+  .b-primary { background: var(--red); color: var(--on-red); }
+  .b-primary:hover { background: var(--red-hover); }
+  .b-primary:active { background: var(--red-press); }
+  .b-secondary {
+    background: var(--surface-2); color: var(--fg);
+    border-color: var(--border);
+  }
+  .b-secondary:hover { background: var(--surface-3); border-color: var(--border-strong); }
+
+  /* --- C. Soft tint: red text on faint red fill / neutral ghost --- */
+  .c-primary {
+    background: var(--red-soft); color: var(--red);
+    border-color: var(--red-soft-bd);
+  }
+  .c-primary:hover { background: color-mix(in srgb, var(--red) 22%, transparent); }
+  .c-secondary {
+    background: transparent; color: var(--muted);
+    border-color: var(--border);
+  }
+  .c-secondary:hover { background: var(--surface-2); color: var(--fg); border-color: var(--border-strong); }
+
+  /* --- D. Outline red primary / outline neutral secondary --- */
+  .d-primary {
+    background: transparent; color: var(--red);
+    border-color: var(--red);
+  }
+  .d-primary:hover { background: var(--red-soft); }
+  .d-secondary {
+    background: transparent; color: var(--fg);
+    border-color: var(--border-strong);
+  }
+  .d-secondary:hover { background: var(--surface-2); }
+
+  /* --- E. Filled neutral primary / filled neutral secondary (truly quiet) --- */
+  .e-primary {
+    background: var(--fg); color: var(--bg);
+    border-color: transparent;
+  }
+  .e-primary:hover { background: color-mix(in srgb, var(--fg) 86%, var(--muted)); }
+  .e-secondary {
+    background: var(--surface-2); color: var(--fg);
+    border-color: var(--border);
+  }
+  .e-secondary:hover { background: var(--surface-3); }
+
+  .tag { font-size: 11px; color: var(--muted); margin-left: 6px; }
+
+  /* ============================================================
+     COMPOSED MINI-APP  (shows a theme as one coherent surface)
+     ============================================================ */
+  .compose { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
+  @media (max-width: 860px) { .compose { grid-template-columns: 1fr; } }
+
+  .mini {
+    border-radius: 16px; overflow: hidden;
+    border: 1px solid var(--border-strong);
+    box-shadow: var(--shadow);
+  }
+  /* each mini paints its own theme regardless of page theme */
+  .mini[data-theme="dark"]  { color: #ececf1; }
+  .mini[data-theme="light"] { color: #1b1b22; }
+  .mini .frame {
+    background: var(--bg);
+  }
+  /* scope tokens locally so both minis show simultaneously */
+  .mini.dark {
+    --bg:#17171c; --fg:#ececf1; --muted:#9494a3; --surface:#202028; --surface-2:#2a2a34;
+    --surface-3:#34343f; --border:rgba(255,255,255,.10); --border-strong:rgba(255,255,255,.16);
+    --hairline:rgba(255,255,255,.06); --switch-off:#3a3a46; --shadow:0 10px 30px rgba(0,0,0,.45);
+    --red:#e5484d; --red-hover:#ef5a5f; --red-soft:rgba(229,72,77,.14); --red-soft-bd:rgba(229,72,77,.4); --on-red:#fff;
+    color:#ececf1;
+  }
+  .mini.light {
+    --bg:#f4f4f7; --fg:#1b1b22; --muted:#6c6c7a; --surface:#fff; --surface-2:#ececf1;
+    --surface-3:#e1e1e9; --border:rgba(0,0,0,.12); --border-strong:rgba(0,0,0,.20);
+    --hairline:rgba(0,0,0,.07); --switch-off:#c7c7d2; --shadow:0 10px 28px rgba(0,0,0,.12);
+    --red:#e5252b; --red-hover:#cf2025; --red-soft:rgba(229,37,43,.10); --red-soft-bd:rgba(229,37,43,.35); --on-red:#fff;
+    color:#1b1b22;
+  }
+  .mini .frame { background: var(--bg); padding: 16px; }
+  .mini-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding-bottom: 12px; margin-bottom: 14px;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .mini-head .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 14px; }
+  .mini-head .brand b { color: var(--red); }
+  .mini-head .label { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 4px 16px; margin-bottom: 12px;
+  }
+  .card-title {
+    font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px;
+    color: var(--muted); margin: 14px 0 6px;
+  }
+  .crow {
+    display: flex; align-items: center; justify-content: space-between; gap: 14px;
+    padding: 12px 0; border-top: 1px solid var(--hairline);
+  }
+  .card-title + .crow { border-top: none; }
+  .crow .lab { font-size: 13px; font-weight: 500; }
+  .crow .hint { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+  /* segmented (theme switch lives here now — accent picker removed) */
+  .seg { display: inline-flex; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .seg button { background: transparent; border: none; color: var(--muted); padding: 6px 12px; font-size: 12px; font-weight: 600; cursor: pointer; }
+  .seg button.on { background: var(--red); color: var(--on-red); }
+
+  .switch { position: relative; width: 42px; height: 23px; }
+  .switch input { display: none; }
+  .track { position: absolute; inset: 0; background: var(--switch-off); border-radius: 999px; transition: background .2s; }
+  .track::before { content:""; position:absolute; width:17px; height:17px; left:3px; top:3px; background:#fff; border-radius:50%; transition: transform .2s; }
+  .switch input:checked + .track { background: var(--red); }
+  .switch input:checked + .track::before { transform: translateX(19px); }
+
+  /* history item with Copy / Paste */
+  .hitem {
+    background: var(--surface); border: 1px solid var(--border);
+    border-left: 3px solid var(--red);
+    border-radius: 10px; padding: 13px 14px; margin-bottom: 12px;
+  }
+  .hitem p { margin: 0 0 12px; font-size: 13px; line-height: 1.45; }
+  .hitem .acts { display: flex; align-items: center; gap: 8px; }
+  .hitem .time { margin-left: auto; font-size: 11px; color: var(--muted); }
+
+  /* pill states */
+  .pills { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; margin-top: 4px; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 9px;
+    padding: 8px 15px 8px 12px; border-radius: 999px;
+    background: var(--surface); border: 1px solid var(--border-strong);
+    font-size: 12px; font-weight: 600;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.05);
+  }
+  .dot { width: 11px; height: 11px; border-radius: 50%; background: var(--red); }
+  .pill.idle .dot { box-shadow: 0 0 0 4px var(--red-soft); }
+  .pill.live { border-color: var(--red); animation: glow 1.8s ease-in-out infinite; }
+  .pill.live .dot { animation: blink 1s ease-in-out infinite; }
+  @keyframes glow {
+    0%,100% { box-shadow: inset 0 1px 0 rgba(255,255,255,.05), 0 0 0 0 transparent; }
+    50% { box-shadow: inset 0 1px 0 rgba(255,255,255,.05), 0 0 18px 1px var(--red-soft-bd); }
+  }
+  @keyframes blink { 0%,100%{opacity:1;} 50%{opacity:.35;} }
+  .wave { display: inline-flex; gap: 3px; align-items: center; height: 16px; }
+  .wave i { width: 3px; height: 6px; border-radius: 2px; background: var(--red); animation: w .9s ease-in-out infinite; }
+  .wave i:nth-child(2){animation-delay:.1s} .wave i:nth-child(3){animation-delay:.2s}
+  .wave i:nth-child(4){animation-delay:.3s} .wave i:nth-child(5){animation-delay:.4s}
+  @keyframes w { 0%,100%{height:6px} 50%{height:15px} }
+
+  .swatches { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  .sw { width: 46px; height: 46px; border-radius: 9px; border: 1px solid var(--border); position: relative; }
+  .sw span { position:absolute; bottom:-17px; left:0; right:0; text-align:center; font-size:10px; color:var(--muted); }
+</style>
+</head>
+<body>
+  <div class="page-head">
+    <div>
+      <h1>VoicePill — Theme & Button Picker</h1>
+      <p>Red is the one accent, reserved for the mic (idle dot + listening). Everything else is neutral so the app feels like one piece. Pick a <b>button variant</b>, then check the composed <b>light + dark</b> themes below.</p>
+    </div>
+    <div class="theme-toggle">
+      <button id="t-dark" class="on" onclick="setTheme('dark')">Dark</button>
+      <button id="t-light" onclick="setTheme('light')">Light</button>
+    </div>
+  </div>
+
+  <div class="wrap">
+
+    <!-- ============ BUTTON VARIANTS ============ -->
+    <div class="group-title">Button variants — pick one</div>
+    <p class="note">Each card shows the <b>Copy / Paste</b> pair (history actions) and a single <b>Download</b> (settings). The current app uses red gradients + a too-dark ghost Paste — all of these are flat and cohesive. Toggle Dark/Light in the header to judge both.</p>
+
+    <div class="variants">
+      <div class="vcard">
+        <h3>A — Monochrome <span class="tag">red only for mic</span></h3>
+        <p class="desc">Actions are neutral; red is never spent on buttons. Most cohesive, calmest. Primary = raised fill, secondary = outline.</p>
+        <div class="demo-row">
+          <button class="btn a-primary">Copy</button>
+          <button class="btn a-secondary">Paste</button>
+        </div>
+        <div class="demo-sep"></div>
+        <div class="demo-row"><button class="btn a-primary">Download</button></div>
+      </div>
+
+      <div class="vcard">
+        <h3>B — Solid red primary <span class="tag">strong CTA</span></h3>
+        <p class="desc">Primary action is solid red, secondary is a solid neutral chip with a clear border (fixes the dark Paste). Flat, no gradient.</p>
+        <div class="demo-row">
+          <button class="btn b-primary">Copy</button>
+          <button class="btn b-secondary">Paste</button>
+        </div>
+        <div class="demo-sep"></div>
+        <div class="demo-row"><button class="btn b-primary">Download</button></div>
+      </div>
+
+      <div class="vcard">
+        <h3>C — Soft tint <span class="tag">subtle</span></h3>
+        <p class="desc">Red text on a faint red fill for primary; quiet ghost for secondary. Hints at the accent without shouting.</p>
+        <div class="demo-row">
+          <button class="btn c-primary">Copy</button>
+          <button class="btn c-secondary">Paste</button>
+        </div>
+        <div class="demo-sep"></div>
+        <div class="demo-row"><button class="btn c-primary">Download</button></div>
+      </div>
+
+      <div class="vcard">
+        <h3>D — Outline <span class="tag">light & airy</span></h3>
+        <p class="desc">Red outline primary, neutral outline secondary. Equal weight, very clean — reads well in light mode especially.</p>
+        <div class="demo-row">
+          <button class="btn d-primary">Copy</button>
+          <button class="btn d-secondary">Paste</button>
+        </div>
+        <div class="demo-sep"></div>
+        <div class="demo-row"><button class="btn d-primary">Download</button></div>
+      </div>
+
+      <div class="vcard">
+        <h3>E — Ink primary <span class="tag">high contrast</span></h3>
+        <p class="desc">Primary is the foreground color inverted (near-black on dark→light), secondary is a neutral chip. Maximal legibility, zero color noise.</p>
+        <div class="demo-row">
+          <button class="btn e-primary">Copy</button>
+          <button class="btn e-secondary">Paste</button>
+        </div>
+        <div class="demo-sep"></div>
+        <div class="demo-row"><button class="btn e-primary">Download</button></div>
+      </div>
+
+      <div class="vcard" style="display:flex;flex-direction:column;justify-content:center;">
+        <h3>How to tell me</h3>
+        <p class="desc" style="margin:0;">Reply with the letter (e.g. “go with <b>B</b>”). Mix is fine too — e.g. “<b>B</b> primary but <b>A</b> secondary”. I’ll wire it into <code>styles.css</code>, drop the accent picker, and lock the red.</p>
+      </div>
+    </div>
+
+    <!-- ============ COMPOSED THEMES ============ -->
+    <div class="group-title">Cohesive themes — dark & light, side by side</div>
+    <p class="note">Both shown with variant <b>B</b> buttons as a placeholder. Same neutral surfaces, same single red accent, no per-user accent color. This is the “one coherent app” target.</p>
+
+    <div class="compose">
+      <!-- DARK -->
+      <div class="mini dark">
+        <div class="frame">
+          <div class="mini-head">
+            <div class="brand"><span>Voice<b>Pill</b></span></div>
+            <div class="label">Dark</div>
+          </div>
+
+          <div class="card">
+            <div class="card-title">Appearance</div>
+            <div class="crow">
+              <div><div class="lab">Theme</div><div class="hint">Light, dark, or follow system</div></div>
+              <div class="seg"><button>System</button><button class="on">Dark</button><button>Light</button></div>
+            </div>
+            <div class="crow">
+              <div><div class="lab">Start with Windows</div><div class="hint">Launch VoicePill at login</div></div>
+              <label class="switch"><input type="checkbox" checked><span class="track"></span></label>
+            </div>
+          </div>
+
+          <div class="hitem">
+            <p>Send the updated mockups to the team and ask which button variant feels right.</p>
+            <div class="acts">
+              <button class="btn b-primary">Copy</button>
+              <button class="btn b-secondary">Paste</button>
+              <span class="time">2:14 PM</span>
+            </div>
+          </div>
+
+          <div class="pills">
+            <span class="pill idle"><span class="dot"></span> Ready</span>
+            <span class="pill live"><span class="wave"><i></i><i></i><i></i><i></i><i></i></span> Listening</span>
+          </div>
+
+          <div class="swatches">
+            <div class="sw" style="background:#17171c"><span>bg</span></div>
+            <div class="sw" style="background:#202028"><span>surface</span></div>
+            <div class="sw" style="background:#2a2a34"><span>raised</span></div>
+            <div class="sw" style="background:#e5484d"><span>red</span></div>
+            <div class="sw" style="background:#ececf1"><span>fg</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- LIGHT -->
+      <div class="mini light">
+        <div class="frame">
+          <div class="mini-head">
+            <div class="brand"><span>Voice<b>Pill</b></span></div>
+            <div class="label">Light</div>
+          </div>
+
+          <div class="card">
+            <div class="card-title">Appearance</div>
+            <div class="crow">
+              <div><div class="lab">Theme</div><div class="hint">Light, dark, or follow system</div></div>
+              <div class="seg"><button>System</button><button>Dark</button><button class="on">Light</button></div>
+            </div>
+            <div class="crow">
+              <div><div class="lab">Start with Windows</div><div class="hint">Launch VoicePill at login</div></div>
+              <label class="switch"><input type="checkbox" checked><span class="track"></span></label>
+            </div>
+          </div>
+
+          <div class="hitem">
+            <p>Send the updated mockups to the team and ask which button variant feels right.</p>
+            <div class="acts">
+              <button class="btn b-primary">Copy</button>
+              <button class="btn b-secondary">Paste</button>
+              <span class="time">2:14 PM</span>
+            </div>
+          </div>
+
+          <div class="pills">
+            <span class="pill idle"><span class="dot"></span> Ready</span>
+            <span class="pill live"><span class="wave"><i></i><i></i><i></i><i></i><i></i></span> Listening</span>
+          </div>
+
+          <div class="swatches">
+            <div class="sw" style="background:#f4f4f7"><span>bg</span></div>
+            <div class="sw" style="background:#ffffff"><span>surface</span></div>
+            <div class="sw" style="background:#ececf1"><span>raised</span></div>
+            <div class="sw" style="background:#e5252b"><span>red</span></div>
+            <div class="sw" style="background:#1b1b22"><span>fg</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    function setTheme(t) {
+      document.documentElement.setAttribute('data-theme', t);
+      document.getElementById('t-dark').classList.toggle('on', t === 'dark');
+      document.getElementById('t-light').classList.toggle('on', t === 'light');
+    }
+  </script>
+</body>
+</html>
