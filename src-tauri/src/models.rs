@@ -288,6 +288,14 @@ fn attempt_download(
         }
     }
     std::io::Write::flush(&mut file).map_err(|e| e.to_string())?;
+    // Guard against a body that closed early (proxy/CDN reset on the multi-GB
+    // blobs): a short read that surfaces as clean EOF would otherwise rename a
+    // truncated file into place and report the model as fully downloaded.
+    if total > 0 && received != total {
+        return Err(format!(
+            "incomplete download: {received}/{total} bytes"
+        ));
+    }
     Ok(received)
 }
 

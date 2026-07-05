@@ -284,16 +284,21 @@ pub fn run(app: AppHandle, rx: Receiver<SessionEvent>) {
                 // low on purpose so whispers and quiet speech still pass; the
                 // model's own per-segment no-speech check (in transcribe) is the
                 // second line of defense for borderline cases.
-                if !samples_16k.is_empty() {
-                    let secs = samples_16k.len() as f32 / TARGET_RATE as f32;
-                    let rms = (samples_16k.iter().map(|s| s * s).sum::<f32>()
-                        / samples_16k.len() as f32)
-                        .sqrt();
-                    if secs < MIN_SPEECH_SECONDS || rms < SPEECH_RMS_FLOOR {
-                        println!("[audio] skipped (no speech): {secs:.2}s rms={rms:.4}");
-                        let _ = app.emit("pill:state", "idle");
-                        continue;
-                    }
+                // Empty (resample failed / no capture) → nothing to do. Handle it
+                // once here so the speech gate and the no-model nudge below both
+                // run only on real audio.
+                if samples_16k.is_empty() {
+                    let _ = app.emit("pill:state", "idle");
+                    continue;
+                }
+                let secs = samples_16k.len() as f32 / TARGET_RATE as f32;
+                let rms = (samples_16k.iter().map(|s| s * s).sum::<f32>()
+                    / samples_16k.len() as f32)
+                    .sqrt();
+                if secs < MIN_SPEECH_SECONDS || rms < SPEECH_RMS_FLOOR {
+                    println!("[audio] skipped (no speech): {secs:.2}s rms={rms:.4}");
+                    let _ = app.emit("pill:state", "idle");
+                    continue;
                 }
 
                 // Pull the active model + language + paste behavior.
@@ -309,10 +314,6 @@ pub fn run(app: AppHandle, rx: Receiver<SessionEvent>) {
                     let _ = app.emit("pill:state", "idle");
                     continue;
                 };
-                if samples_16k.is_empty() {
-                    let _ = app.emit("pill:state", "idle");
-                    continue;
-                }
 
                 let _ = app.emit("pill:state", "busy");
                 match transcriber.transcribe(&model_id, &language, &samples_16k) {
@@ -441,7 +442,7 @@ fn start_stream(
                     if !cap.load(Ordering::Relaxed) {
                         return;
                     }
-                    push_mono(&buf, data, channels);
+                    push_mono(&buf, data, channels, |s| s);
                 },
                 err_fn,
                 None,
@@ -455,8 +456,7 @@ fn start_stream(
                     if !cap.load(Ordering::Relaxed) {
                         return;
                     }
-                    let f: Vec<f32> = data.iter().map(|s| *s as f32 / i16::MAX as f32).collect();
-                    push_mono(&buf, &f, channels);
+                    push_mono(&buf, data, channels, |s| s as f32 / i16::MAX as f32);
                 },
                 err_fn,
                 None,
@@ -470,11 +470,7 @@ fn start_stream(
                     if !cap.load(Ordering::Relaxed) {
                         return;
                     }
-                    let f: Vec<f32> = data
-                        .iter()
-                        .map(|s| (*s as f32 / u16::MAX as f32) * 2.0 - 1.0)
-                        .collect();
-                    push_mono(&buf, &f, channels);
+                    push_mono(&buf, data, channels, |s| (s as f32 / u16::MAX as f32) * 2.0 - 1.0);
                 },
                 err_fn,
                 None,
@@ -565,14 +561,22 @@ fn stream_needs_rebuild_for_names(
     }
 }
 
-/// Append `data` (interleaved, `channels`-wide) to `buf`, downmixed to mono.
-fn push_mono(buf: &Arc<Mutex<Vec<f32>>>, data: &[f32], channels: usize) {
+/// Append `data` (interleaved, `channels`-wide) to `buf`, converting each sample
+/// to f32 via `conv` and downmixing to mono. Generic over the sample type so the
+/// i16/u16 paths convert in place instead of allocating a temporary `Vec<f32>`
+/// on every realtime capture callback.
+fn push_mono<T: Copy>(
+    buf: &Arc<Mutex<Vec<f32>>>,
+    data: &[T],
+    channels: usize,
+    conv: impl Fn(T) -> f32,
+) {
     let mut b = buf.lock().unwrap();
     if channels <= 1 {
-        b.extend_from_slice(data);
+        b.extend(data.iter().map(|&s| conv(s)));
     } else {
         for frame in data.chunks(channels) {
-            let sum: f32 = frame.iter().sum();
+            let sum: f32 = frame.iter().map(|&s| conv(s)).sum();
             b.push(sum / frame.len() as f32);
         }
     }
@@ -612,6 +616,13 @@ fn resample_to_16k(input: &[f32], in_rate: u32) -> Result<Vec<f32>, String> {
             .map_err(|e| e.to_string())?;
         out.extend_from_slice(&resampled[0]);
         pos += chunk;
+    }
+    // Flush the resampler's internal delay line (~sinc_len/2 input samples).
+    // Without this the last few ms of the utterance stay buffered and get
+    // clipped — enough to drop the final phoneme of a short dictation. One zero
+    // chunk drives the delayed output out; trailing near-silence is harmless.
+    if let Ok(resampled) = resampler.process(&[vec![0.0f32; chunk]], None) {
+        out.extend_from_slice(&resampled[0]);
     }
     Ok(out)
 }

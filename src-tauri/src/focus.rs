@@ -31,11 +31,31 @@ pub fn spawn(_state: Arc<LastExternalWindow>) {}
 
 #[cfg(windows)]
 pub fn focus_last_external(state: &Arc<LastExternalWindow>) -> bool {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::System::Threading::GetCurrentProcessId;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetWindowThreadProcessId, IsWindow, SetForegroundWindow,
+    };
+
     let Some(raw) = *state.0.lock().unwrap() else {
         return false;
     };
-    let hwnd = windows::Win32::Foundation::HWND(raw as *mut core::ffi::c_void);
-    unsafe { windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow(hwnd).as_bool() }
+    let hwnd = HWND(raw as *mut core::ffi::c_void);
+    unsafe {
+        // The stored HWND may have been destroyed (and its numeric handle
+        // recycled onto an unrelated window) since we last saw it foreground.
+        // Reject it unless it's still a live window owned by another process,
+        // so we never yank focus to the wrong app before pasting.
+        if !IsWindow(Some(hwnd)).as_bool() {
+            return false;
+        }
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        if pid == 0 || pid == GetCurrentProcessId() {
+            return false;
+        }
+        SetForegroundWindow(hwnd).as_bool()
+    }
 }
 
 #[cfg(not(windows))]

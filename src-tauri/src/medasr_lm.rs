@@ -193,14 +193,64 @@ fn pack_with(ctx: &[u32], w: u32) -> u64 {
     (pack(ctx) << ID_BITS) | w as u64
 }
 
+/// Interns every collapsed CTC prefix seen during the search as a node in a
+/// trie, so a prefix is identified by a single `u32` id instead of a `Vec<u32>`.
+/// This is what lets the per-frame merge map key on a cheap integer (no full
+/// prefix clone or length-proportional hash per candidate), while still merging
+/// identical prefixes reached from different parents — the trie interns each
+/// distinct token sequence to one shared node id.
+struct PrefixTrie {
+    parent: Vec<u32>,
+    token: Vec<u32>,
+    children: Vec<std::collections::HashMap<u32, u32>>,
+}
+
+impl PrefixTrie {
+    /// Node 0 is the empty prefix (root).
+    fn new() -> Self {
+        PrefixTrie {
+            parent: vec![0],
+            token: vec![0],
+            children: vec![std::collections::HashMap::new()],
+        }
+    }
+
+    /// Node id for `node` extended by `tok`, creating it on first use.
+    fn child(&mut self, node: u32, tok: u32) -> u32 {
+        if let Some(&c) = self.children[node as usize].get(&tok) {
+            return c;
+        }
+        let id = self.parent.len() as u32;
+        self.parent.push(node);
+        self.token.push(tok);
+        self.children.push(std::collections::HashMap::new());
+        self.children[node as usize].insert(tok, id);
+        id
+    }
+
+    /// Reconstruct the token sequence for `node` by walking parent links.
+    fn prefix(&self, mut node: u32) -> Vec<u32> {
+        let mut out = Vec::new();
+        while node != 0 {
+            out.push(self.token[node as usize]);
+            node = self.parent[node as usize];
+        }
+        out.reverse();
+        out
+    }
+}
+
 #[derive(Clone)]
 struct Beam {
-    /// Collapsed CTC output so far (token ids, no blanks).
-    prefix: Vec<u32>,
-    /// ln probability of `prefix` over paths ending in blank / non-blank.
+    /// Prefix identity in the shared trie (0 = empty).
+    node: u32,
+    /// Last token of the prefix (`None` at the root), cached to avoid a trie
+    /// walk on the hot path.
+    last: Option<u32>,
+    /// ln probability of the prefix over paths ending in blank / non-blank.
     p_b: f32,
     p_nb: f32,
-    /// Cumulative scaled LM score of `prefix`.
+    /// Cumulative scaled LM score of the prefix.
     lm: f32,
     /// LM context: `<s>` followed by the last `order - 1` tokens.
     ctx: Vec<u32>,
@@ -234,8 +284,10 @@ pub fn beam_search(
     lm: &LmModel,
 ) -> Vec<u32> {
     let ctx_len = lm.context_len();
+    let mut trie = PrefixTrie::new();
     let mut beams = vec![Beam {
-        prefix: Vec::new(),
+        node: 0,
+        last: None,
         p_b: 0.0,
         p_nb: f32::NEG_INFINITY,
         lm: 0.0,
@@ -250,8 +302,10 @@ pub fn beam_search(
         // Candidate tokens for this frame: everything above the pyctcdecode
         // floor. The argmax always qualifies (a softmax max is ≥ 1/512 > e^-5).
         let mut next: Vec<Beam> = Vec::with_capacity(beams.len() * 4);
-        // prefix -> index in `next`, so extensions from different parents merge.
-        let mut index: std::collections::HashMap<Vec<u32>, usize> =
+        // trie node -> index in `next`, so extensions from different parents
+        // that reach the same prefix merge (the trie interns that prefix to one
+        // node id, so the merge key is a single integer).
+        let mut index: std::collections::HashMap<u32, usize> =
             std::collections::HashMap::with_capacity(beams.len() * 4);
 
         for beam in &beams {
@@ -259,14 +313,15 @@ pub fn beam_search(
 
             // Stay on this prefix: blank, or a repeat of its last token.
             let p_b = p_tot + logp[blank];
-            let p_nb = match beam.prefix.last() {
-                Some(&last) => beam.p_nb + logp[last as usize],
+            let p_nb = match beam.last {
+                Some(last) => beam.p_nb + logp[last as usize],
                 None => f32::NEG_INFINITY,
             };
             merge(
                 &mut next,
                 &mut index,
-                &beam.prefix,
+                beam.node,
+                beam.last,
                 p_b,
                 p_nb,
                 beam.lm,
@@ -281,7 +336,7 @@ pub fn beam_search(
                 let c32 = c as u32;
                 // Emitting the same token again needs a blank in between;
                 // only the blank-ending mass can extend with it.
-                let p = if beam.prefix.last() == Some(&c32) {
+                let p = if beam.last == Some(c32) {
                     beam.p_b + logp[c]
                 } else {
                     p_tot + logp[c]
@@ -290,9 +345,8 @@ pub fn beam_search(
                     continue;
                 }
 
-                let mut prefix = beam.prefix.clone();
-                prefix.push(c32);
-                match index.get(&prefix) {
+                let child = trie.child(beam.node, c32);
+                match index.get(&child) {
                     // Same extended prefix from another parent: the LM score
                     // is a function of the prefix alone, so it already matches.
                     Some(&i) => next[i].p_nb = log_add(next[i].p_nb, p),
@@ -303,9 +357,10 @@ pub fn beam_search(
                             ctx.drain(..ctx.len() - ctx_len);
                         }
                         let lm_score = beam.lm + lm.word_score(&beam.ctx, c32);
-                        index.insert(prefix.clone(), next.len());
+                        index.insert(child, next.len());
                         next.push(Beam {
-                            prefix,
+                            node: child,
+                            last: Some(c32),
                             p_b: f32::NEG_INFINITY,
                             p_nb: p,
                             lm: lm_score,
@@ -329,30 +384,33 @@ pub fn beam_search(
             b
         })
         .max_by(|a, b| a.score().total_cmp(&b.score()))
-        .map(|b| b.prefix)
+        .map(|b| trie.prefix(b.node))
         .unwrap_or_default()
 }
 
-/// Fold a (prefix, p_b, p_nb) contribution into `next`, log-summing with any
-/// beam that already has this prefix.
+/// Fold a (node, p_b, p_nb) contribution into `next`, log-summing with any beam
+/// that already has this trie node (prefix).
+#[allow(clippy::too_many_arguments)]
 fn merge(
     next: &mut Vec<Beam>,
-    index: &mut std::collections::HashMap<Vec<u32>, usize>,
-    prefix: &[u32],
+    index: &mut std::collections::HashMap<u32, usize>,
+    node: u32,
+    last: Option<u32>,
     p_b: f32,
     p_nb: f32,
     lm_score: f32,
     ctx: &[u32],
 ) {
-    match index.get(prefix) {
+    match index.get(&node) {
         Some(&i) => {
             next[i].p_b = log_add(next[i].p_b, p_b);
             next[i].p_nb = log_add(next[i].p_nb, p_nb);
         }
         None => {
-            index.insert(prefix.to_vec(), next.len());
+            index.insert(node, next.len());
             next.push(Beam {
-                prefix: prefix.to_vec(),
+                node,
+                last,
                 p_b,
                 p_nb,
                 lm: lm_score,

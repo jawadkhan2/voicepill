@@ -37,10 +37,7 @@ pub fn update_settings(
         crate::models::validate_id(model)?;
     }
 
-    let previous = state.0.lock().unwrap().clone();
-    let previous_autostart = previous.autostart;
-    settings.pill_pos = previous.pill_pos;
-    settings.transcript_history = previous.transcript_history;
+    let previous_autostart = state.0.lock().unwrap().autostart;
 
     if settings.autostart != previous_autostart {
         let autolaunch = app.autolaunch();
@@ -52,23 +49,32 @@ pub fn update_settings(
         .map_err(|e| format!("autostart update failed: {e}"))?;
     }
 
-    if let Err(err) = settings::save(&app, &settings) {
-        if settings.autostart != previous_autostart {
-            let autolaunch = app.autolaunch();
-            let _ = if previous_autostart {
-                autolaunch.enable()
-            } else {
-                autolaunch.disable()
-            };
+    // Merge the volatile fields (pill position, transcript history) from the
+    // freshest live state, persist, and commit — all under one lock. Doing the
+    // read-merge-write across separate locks let a concurrent `save_pill_pos`
+    // land in the gap and get clobbered by a stale position.
+    {
+        let mut g = state.0.lock().unwrap();
+        settings.pill_pos = g.pill_pos;
+        settings.transcript_history = g.transcript_history.clone();
+        if let Err(err) = settings::save(&app, &settings) {
+            // Roll back the autostart side effect; leave live state untouched.
+            if settings.autostart != previous_autostart {
+                let autolaunch = app.autolaunch();
+                let _ = if previous_autostart {
+                    autolaunch.enable()
+                } else {
+                    autolaunch.disable()
+                };
+            }
+            return Err(err);
         }
-        return Err(err);
+        *g = settings.clone();
     }
 
     // Keep the input hook's view of the binding/mode current.
     *hook.binding.lock().unwrap() = settings.trigger.clone();
     *hook.mode.lock().unwrap() = settings.trigger_mode;
-
-    *state.0.lock().unwrap() = settings.clone();
 
     // Let other windows (the pill) re-apply appearance — theme, accent, pill
     // size/opacity/compact — without polling.

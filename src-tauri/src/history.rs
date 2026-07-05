@@ -4,6 +4,7 @@
 //! or stale out transcript history. The list is tiny: newest-first, capped at 10.
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use tauri::{AppHandle, Manager};
@@ -45,8 +46,13 @@ pub fn add(
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|e| e.to_string())?
         .as_millis() as u64;
+    // Two dictations can land in the same millisecond; a bare timestamp would
+    // then collide as a frontend list key. Suffix a process-monotonic counter
+    // so ids stay unique while remaining sortable by time.
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
     let entry = TranscriptEntry {
-        id: created_at_ms.to_string(),
+        id: format!("{created_at_ms}-{seq}"),
         text,
         created_at_ms,
     };
