@@ -34,7 +34,6 @@ interface Settings {
   trigger: TriggerBinding | null;
   trigger_mode: TriggerMode;
   model: string | null;
-  language: string;
   audio_device: string | null;
   autostart: boolean;
   restore_clipboard: boolean;
@@ -50,7 +49,7 @@ interface ModelInfo {
   id: string;
   label: string;
   size_mb: number;
-  engine: "whisper" | "medasr";
+  engine: "whisper" | "medasr" | "parakeet";
   downloaded: boolean;
 }
 
@@ -69,23 +68,6 @@ interface AudioError {
   detail: string;
   sticky: boolean;
 }
-
-const LANGUAGES: Array<[string, string]> = [
-  ["auto", "Auto-detect"],
-  ["en", "English"],
-  ["es", "Spanish"],
-  ["fr", "French"],
-  ["de", "German"],
-  ["it", "Italian"],
-  ["pt", "Portuguese"],
-  ["nl", "Dutch"],
-  ["ru", "Russian"],
-  ["zh", "Chinese"],
-  ["ja", "Japanese"],
-  ["ko", "Korean"],
-  ["hi", "Hindi"],
-  ["ar", "Arabic"],
-];
 
 let settings: Settings;
 let capturing = false;
@@ -466,31 +448,12 @@ function transcriptionSection(): HTMLElement {
   }
   s.appendChild(list);
 
-  const lang = document.createElement("select");
-  lang.className = "select";
-  for (const [val, lbl] of LANGUAGES) {
-    const o = document.createElement("option");
-    o.value = val;
-    o.textContent = lbl;
-    if (settings.language === val) o.selected = true;
-    lang.appendChild(o);
-  }
-  lang.onchange = async () => {
-    settings.language = lang.value;
-    await persist();
-  };
-  // MedASR is English-only, so the language picker doesn't apply to it.
-  const activeEngine = models.find((m) => m.id === settings.model)?.engine;
-  const langRow = row(
-    "Language",
-    lang,
-    activeEngine === "medasr" ? "MedASR is English-only" : undefined,
-  );
-  if (activeEngine === "medasr") {
-    lang.disabled = true;
-    langRow.classList.add("disabled");
-  }
-  s.appendChild(langRow);
+  // Transcription is English-only, so there is no language picker. Spoken
+  // formatting commands work with Parakeet and Whisper.
+  const cmds = document.createElement("span");
+  cmds.className = "row-hint";
+  cmds.textContent = "Say “next line” or “new paragraph” to insert a line break.";
+  s.appendChild(row("Voice commands", cmds));
 
   return s;
 }
@@ -507,10 +470,14 @@ function modelRow(m: ModelInfo): HTMLElement {
   name.className = "model-name";
   name.textContent = m.label;
   // Specialty models get a small badge so they stand apart from generic Whisper.
-  if (m.engine === "medasr") {
+  const tagText =
+    m.engine === "medasr" ? "Medical · English"
+    : m.engine === "parakeet" ? "Recommended · Fastest · NVIDIA GPU"
+    : null;
+  if (tagText) {
     const tag = document.createElement("span");
     tag.className = "model-tag";
-    tag.textContent = "Medical · English";
+    tag.textContent = tagText;
     name.appendChild(tag);
   }
   const size = document.createElement("span");

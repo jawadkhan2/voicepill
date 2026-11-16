@@ -14,16 +14,20 @@ use whisper_rs::{
 
 use crate::medasr::MedAsrBackend;
 use crate::models::{engine_of, Engine};
+use crate::parakeet::ParakeetBackend;
 
-/// Front door for transcription. Routes each model id to its engine: Whisper
-/// (ggml/whisper.cpp, GPU where available) or MedASR (ONNX/CPU). The audio
-/// coordinator talks only to this type and never has to know which engine runs.
+/// Front door for transcription. Routes each model id to its engine: Parakeet
+/// (ONNX Runtime, CUDA), Whisper (ggml/whisper.cpp, GPU where available) or
+/// MedASR (ONNX/CPU). The audio coordinator talks only to this type and never
+/// has to know which engine runs. Dictation is English-only.
 pub struct Transcriber {
     models_dir: PathBuf,
     /// Whisper: the loaded model. `None` until the first load.
     loaded: Option<LoadedWhisper>,
     /// MedASR backend (ONNX). Owns its own lazy-loaded session.
     medasr: MedAsrBackend,
+    /// Parakeet backend (ONNX Runtime CUDA). Owns its own sessions.
+    parakeet: ParakeetBackend,
 }
 
 /// A loaded Whisper model plus its reusable decode state.
@@ -38,6 +42,7 @@ impl Transcriber {
     pub fn new(models_dir: PathBuf) -> Self {
         Transcriber {
             medasr: MedAsrBackend::new(models_dir.clone()),
+            parakeet: ParakeetBackend::new(models_dir.clone()),
             models_dir,
             loaded: None,
         }
@@ -51,6 +56,7 @@ impl Transcriber {
     pub fn is_loaded(&self, id: &str) -> bool {
         match engine_of(id) {
             Engine::MedAsr => self.medasr.is_loaded(id),
+            Engine::Parakeet => self.parakeet.is_loaded(id),
             Engine::Whisper => self.loaded.as_ref().map(|l| l.id == id).unwrap_or(false),
         }
     }
@@ -59,8 +65,14 @@ impl Transcriber {
     /// `pub` so the audio coordinator can preload a model on demand (when the
     /// user clicks "Use") rather than lazily on first transcription.
     pub fn ensure_loaded(&mut self, id: &str) -> Result<(), String> {
-        if let Engine::MedAsr = engine_of(id) {
-            return self.medasr.ensure_loaded(id);
+        match engine_of(id) {
+            Engine::MedAsr => return self.medasr.ensure_loaded(id),
+            Engine::Parakeet => {
+                // One GPU model at a time: drop Whisper's VRAM first.
+                self.loaded = None;
+                return self.parakeet.ensure_loaded(id);
+            }
+            Engine::Whisper => {}
         }
 
         let already = self.loaded.as_ref().map(|l| l.id == id).unwrap_or(false);
@@ -74,11 +86,13 @@ impl Transcriber {
         }
         let path_str = path.to_str().ok_or("model path is not valid UTF-8")?;
 
-        // Free the previous model *before* loading the next one so two models
-        // never sit in VRAM at once (large-v3 + its state is ~4 GB; doubling
-        // that on a busy 16 GB card pushes WDDM into paging to system RAM,
-        // which makes inference crawl as if it were running on the CPU).
+        // Free the previous model (including a Parakeet model) *before* loading
+        // the next one so two models never sit in VRAM at once (large-v3 + its
+        // state is ~4 GB; doubling that on a busy 16 GB card pushes WDDM into
+        // paging to system RAM, which makes inference crawl as if it were
+        // running on the CPU).
         self.loaded = None;
+        self.parakeet.unload();
 
         let use_gpu = should_use_gpu();
         let mut params = WhisperContextParameters::default();
@@ -105,19 +119,25 @@ impl Transcriber {
         Ok(())
     }
 
-    /// Transcribe a 16 kHz mono f32 buffer to text.
-    pub fn transcribe(
-        &mut self,
-        model_id: &str,
-        language: &str,
-        audio: &[f32],
-    ) -> Result<String, String> {
-        // MedASR runs on its own ONNX backend; the language hint is unused
-        // (English-only model).
-        if let Engine::MedAsr = engine_of(model_id) {
-            return self.medasr.transcribe(model_id, audio);
+    /// Transcribe a 16 kHz mono f32 buffer to English text, with spoken
+    /// formatting commands ("next line") already applied.
+    pub fn transcribe(&mut self, model_id: &str, audio: &[f32]) -> Result<String, String> {
+        match engine_of(model_id) {
+            // MedASR expands its own `{command}` tokens.
+            Engine::MedAsr => self.medasr.transcribe(model_id, audio),
+            Engine::Parakeet => {
+                self.ensure_loaded(model_id)?;
+                let text = self.parakeet.transcribe(model_id, audio)?;
+                Ok(crate::voice_commands::apply(&text))
+            }
+            Engine::Whisper => {
+                let text = self.transcribe_whisper(model_id, audio)?;
+                Ok(crate::voice_commands::apply(&text))
+            }
         }
+    }
 
+    fn transcribe_whisper(&mut self, model_id: &str, audio: &[f32]) -> Result<String, String> {
         self.ensure_loaded(model_id)?;
         let loaded = self.loaded.as_mut().expect("ensure_loaded set the model");
 
@@ -128,7 +148,7 @@ impl Transcriber {
             None => loaded.ctx.create_state().map_err(|e| e.to_string())?,
         };
 
-        match run_full(&mut state, language, audio) {
+        match run_full(&mut state, audio) {
             Ok(text) => {
                 loaded.state = Some(state);
                 Ok(text)
@@ -141,7 +161,7 @@ impl Transcriber {
                 crate::vlog!("[transcribe] {first}; retrying on a fresh state");
                 drop(state);
                 let mut fresh = loaded.ctx.create_state().map_err(|e| e.to_string())?;
-                let text = run_full(&mut fresh, language, audio)?;
+                let text = run_full(&mut fresh, audio)?;
                 loaded.state = Some(fresh);
                 Ok(text)
             }
@@ -150,11 +170,11 @@ impl Transcriber {
 }
 
 /// Run one full decode on `state` and collect the text.
-fn run_full(state: &mut WhisperState, language: &str, audio: &[f32]) -> Result<String, String> {
+fn run_full(state: &mut WhisperState, audio: &[f32]) -> Result<String, String> {
     let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
-    if language != "auto" {
-        params.set_language(Some(language));
-    }
+    // English only: skips language detection (faster, and no more short clips
+    // misdetected as another language).
+    params.set_language(Some("en"));
     params.set_print_special(false);
     params.set_print_progress(false);
     params.set_print_realtime(false);
@@ -199,9 +219,8 @@ fn run_full(state: &mut WhisperState, language: &str, audio: &[f32]) -> Result<S
         }
         text.push_str(&s);
     }
-    let lang = whisper_rs::get_lang_str(state.full_lang_id_from_state()).unwrap_or("?");
     crate::vlog!(
-        "[transcribe] {:.2}s audio in {ms}ms, lang={lang}, segments={n_segments}, dropped={dropped}",
+        "[transcribe] {:.2}s audio in {ms}ms, segments={n_segments}, dropped={dropped}",
         audio.len() as f32 / 16_000.0
     );
     Ok(text.trim().to_string())
@@ -271,7 +290,7 @@ mod tests {
         {
             let loaded = t.loaded.as_mut().unwrap();
             let state = loaded.state.as_mut().unwrap();
-            let _ = super::run_full(state, "auto", &audio).unwrap();
+            let _ = super::run_full(state, &audio).unwrap();
             let mut old = String::new();
             for seg in state.as_iter() {
                 let s = seg.to_str_lossy().unwrap().to_string();
@@ -284,7 +303,7 @@ mod tests {
         }
         for run in 0..2 {
             let t0 = std::time::Instant::now();
-            let text = t.transcribe(&model, "auto", &audio).unwrap();
+            let text = t.transcribe(&model, &audio).unwrap();
             println!("NEW run {run} ({} ms): {text:?}", t0.elapsed().as_millis());
             assert!(!text.is_empty());
         }

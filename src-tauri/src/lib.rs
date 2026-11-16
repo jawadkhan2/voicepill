@@ -12,8 +12,11 @@ mod input_hook;
 mod medasr;
 mod medasr_lm;
 mod models;
+mod ort_env;
+mod parakeet;
 mod settings;
 mod transcribe;
+mod voice_commands;
 
 use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};

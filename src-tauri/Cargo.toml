@@ -1,6 +1,6 @@
 [package]
 name = "voicepill"
-version = "0.2.2"
+version = "0.3.0"
 description = "Local voice transcription pill"
 authors = ["VoicePill"]
 edition = "2021"
@@ -38,10 +38,10 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 # Text injection: set the clipboard (arboard) and synthesize Ctrl+V (enigo).
 arboard = "3"
 enigo = "0.6"
-# MedASR medical model: ONNX Runtime inference (CPU EP — the model is small and
-# fast, and this keeps a second CUDA consumer out of the process). `download-
-# binaries` fetches a prebuilt onnxruntime so no system install is required.
-ort = { version = "=2.0.0-rc.10", default-features = false, features = ["std", "download-binaries"] }
+# ONNX Runtime: Parakeet (CUDA EP on Windows, see the target section below) and
+# MedASR (CPU EP). `download-binaries` fetches a prebuilt onnxruntime (core is
+# linked statically); `copy-dylibs` drops the CUDA provider DLLs next to the exe.
+ort = { version = "=2.0.0-rc.15", default-features = false, features = ["std", "download-binaries", "copy-dylibs", "tls-rustls", "api-24"] }
 # SentencePiece/Unigram detokenization for MedASR's CTC output. default-features
 # off to drop the http/progressbar pulls — we only load a local tokenizer.json.
 tokenizers = { version = "0.21", default-features = false, features = ["onig"] }
@@ -54,6 +54,9 @@ log = "0.4"
 # Local transcription on NVIDIA GPUs (whisper.cpp CUDA). CUDA targets are
 # configured in .cargo/config.toml so installers run across GPU generations.
 whisper-rs = { version = "0.16", features = ["cuda", "log_backend"] }
+# Parakeet runs on ONNX Runtime's CUDA execution provider (CUDA 13 build; needs
+# cuDNN 9, downloaded with the model — see ort_env.rs).
+ort = { version = "=2.0.0-rc.15", default-features = false, features = ["cuda"] }
 # Live GPU/VRAM stats via NVIDIA NVML (nvml.dll ships with the driver). Lets the
 # UI confirm the CUDA device and show how much VRAM the loaded model occupies.
 nvml-wrapper = "0.12"

@@ -82,9 +82,6 @@ pub struct Settings {
     /// Selected Whisper model id (filename stem), e.g. `"ggml-base.en"`.
     #[serde(default)]
     pub model: Option<String>,
-    /// Spoken language hint; `"auto"` lets Whisper detect.
-    #[serde(default = "default_language")]
-    pub language: String,
     /// Selected audio input device name; `None` = system default.
     #[serde(default)]
     pub audio_device: Option<String>,
@@ -121,10 +118,6 @@ pub struct Settings {
     pub transcript_history: Vec<TranscriptEntry>,
 }
 
-fn default_language() -> String {
-    "auto".to_string()
-}
-
 fn default_true() -> bool {
     true
 }
@@ -147,7 +140,6 @@ impl Default for Settings {
             trigger: None,
             trigger_mode: TriggerMode::default(),
             model: None,
-            language: default_language(),
             audio_device: None,
             autostart: false,
             restore_clipboard: true,
@@ -206,7 +198,6 @@ mod tests {
             }),
             trigger_mode: TriggerMode::Toggle,
             model: Some("ggml-base.en".into()),
-            language: "en".into(),
             audio_device: None,
             autostart: true,
             restore_clipboard: false,
@@ -241,7 +232,6 @@ mod tests {
         let back: Settings = serde_json::from_str("{}").unwrap();
         assert!(back.trigger.is_none());
         assert_eq!(back.trigger_mode, TriggerMode::PushToTalk);
-        assert_eq!(back.language, "auto");
         assert!(back.restore_clipboard);
         assert_eq!(back.theme, Theme::System);
         assert_eq!(back.accent, "#6c5ce7");
