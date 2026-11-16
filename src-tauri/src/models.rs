@@ -1,9 +1,12 @@
 //! Model catalog + downloader.
 //!
-//! Two engines are offered. Whisper (ggml) models are pulled from the official
+//! Three engines are offered. Whisper (ggml) models are pulled from the official
 //! `ggerganov/whisper.cpp` repo on Hugging Face and stored as `ggml-<id>.bin`.
 //! MedASR (a Google LASR Conformer-CTC model, exported to ONNX) is pulled from a
 //! VoicePill GitHub release and stored as `<id>.onnx` + `<id>-tokenizer.json`.
+//! Parakeet (NVIDIA FastConformer-TDT, ONNX, run on CUDA) is pulled from a
+//! VoicePill GitHub release into `<id>/`, together with the cuDNN DLLs its CUDA
+//! provider needs (`cuda-runtime/`, shared by every Parakeet model).
 //! Downloads run on a background thread and stream progress to the UI via
 //! `model:progress` / `model:done` / `model:error` events.
 
@@ -19,6 +22,7 @@ use tauri::{AppHandle, Emitter, Manager};
 pub enum Engine {
     Whisper,
     MedAsr,
+    Parakeet,
 }
 
 /// One entry in the built-in model catalog.
@@ -31,6 +35,12 @@ struct ModelEntry {
 
 /// Models offered in the picker, smallest → largest (Whisper), then specialty.
 const CATALOG: &[ModelEntry] = &[
+    ModelEntry {
+        id: PARAKEET_V2,
+        label: "Parakeet TDT 0.6B v2",
+        size_mb: PARAKEET_SIZE_MB,
+        engine: Engine::Parakeet,
+    },
     ModelEntry {
         id: "tiny",
         label: "Tiny",
@@ -78,6 +88,30 @@ const CATALOG: &[ModelEntry] = &[
 const HF_BASE: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main";
 /// GitHub release hosting the MedASR ONNX + tokenizer assets.
 const MEDASR_BASE: &str = "https://github.com/jawadkhan2/voicepill/releases/download/medasr-v1";
+/// GitHub release hosting the Parakeet ONNX graphs + the cuDNN runtime.
+const PARAKEET_BASE: &str = "https://github.com/jawadkhan2/voicepill/releases/download/parakeet-v1";
+
+pub const PARAKEET_V2: &str = "parakeet-tdt-0.6b-v2";
+/// Model graphs (~1.2 GB) + cuDNN runtime (~0.7 GB).
+const PARAKEET_SIZE_MB: u32 = 1900;
+
+/// cuDNN 9.28 (CUDA 13 build) DLLs the CUDA execution provider loads. cuDNN
+/// pulls its sub-libraries in lazily per operation (the LSTM needs `adv`, the
+/// conv front end needs `engines_tensor_ir`, ...), so the full set ships rather
+/// than a pruned one that fails on some op later. Shared by every Parakeet
+/// model, so deleting a model leaves them in place.
+const CUDA_RUNTIME_FILES: &[&str] = &[
+    "cudnn64_9.dll",
+    "cudnn_adv64_9.dll",
+    "cudnn_cnn64_9.dll",
+    "cudnn_engines_precompiled64_9.dll",
+    "cudnn_engines_runtime_compiled64_9.dll",
+    "cudnn_engines_tensor_ir64_9.dll",
+    "cudnn_ext64_9.dll",
+    "cudnn_graph64_9.dll",
+    "cudnn_heuristic64_9.dll",
+    "cudnn_ops64_9.dll",
+];
 
 fn entry(id: &str) -> Option<&'static ModelEntry> {
     CATALOG.iter().find(|m| m.id == id)
@@ -112,7 +146,25 @@ fn files_for(m: &ModelEntry) -> Vec<(String, String)> {
                 format!("{MEDASR_BASE}/medasr-lm.bin"),
             ),
         ],
+        Engine::Parakeet => {
+            let mut files: Vec<(String, String)> = crate::parakeet::MODEL_FILES
+                .iter()
+                .map(|f| (format!("{}/{f}", m.id), format!("{PARAKEET_BASE}/{}-{f}", m.id)))
+                .collect();
+            files.extend(CUDA_RUNTIME_FILES.iter().map(|f| {
+                (
+                    format!("{}/{f}", crate::ort_env::CUDA_RUNTIME_DIR),
+                    format!("{PARAKEET_BASE}/{f}"),
+                )
+            }));
+            files
+        }
     }
+}
+
+/// Files shared between models (the CUDA runtime), which `delete` keeps.
+fn is_shared_file(name: &str) -> bool {
+    name.starts_with(&format!("{}/", crate::ort_env::CUDA_RUNTIME_DIR))
 }
 
 /// Serialized to the UI: catalog entry + whether the file is on disk.
@@ -175,6 +227,9 @@ pub fn delete(app: &AppHandle, id: &str) -> Result<(), String> {
     let m = entry(id).ok_or_else(|| format!("unknown model: {id}"))?;
     let dir = models_dir(app)?;
     for (name, _) in files_for(m) {
+        if is_shared_file(&name) {
+            continue;
+        }
         let path = dir.join(&name);
         if path.exists() {
             std::fs::remove_file(&path).map_err(|e| e.to_string())?;
@@ -199,6 +254,11 @@ pub fn download(app: &AppHandle, id: String) -> Result<(), String> {
         // ONNX + tokenizer). A single `model:done` fires once all files land.
         for (name, url) in &files {
             let dest = dir.join(name);
+            // Already on disk (e.g. the shared CUDA runtime from another
+            // Parakeet model, or a file finished before a cancelled download).
+            if dest.exists() {
+                continue;
+            }
             if let Err(e) = run_download(&app, &id, url, &dir, &dest) {
                 crate::vlog!("[models] download '{id}' ({name}) failed: {e}");
                 let _ = app.emit("model:error", serde_json::json!({ "id": id, "error": e }));
@@ -221,6 +281,10 @@ fn run_download(
     dest: &PathBuf,
 ) -> Result<(), String> {
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    // Multi-file models live in a subfolder (`parakeet-…/`, `cuda-runtime/`).
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
 
     // One client, reused across retries. A User-Agent + connect timeout make HF's
     // CDNs behave; without retries a single reset connection (common when several

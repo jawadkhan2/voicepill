@@ -20,7 +20,7 @@
 use std::path::PathBuf;
 
 use ort::session::{builder::GraphOptimizationLevel, Session};
-use ort::value::Value;
+use ort::value::Tensor;
 use tokenizers::Tokenizer;
 
 use crate::medasr_lm::{beam_search, LmModel};
@@ -81,7 +81,7 @@ impl MedAsrBackend {
             return Err(format!("tokenizer for '{id}' is missing"));
         }
 
-        let session = Session::builder()
+        let session = Session::builder(crate::ort_env::env()?)
             .map_err(|e| format!("ort session builder: {e}"))?
             .with_optimization_level(GraphOptimizationLevel::Level3)
             .map_err(|e| format!("ort opt level: {e}"))?
@@ -131,7 +131,7 @@ impl MedAsrBackend {
         } else {
             audio.to_vec()
         };
-        let input = Value::from_array(([1usize, wave.len()], wave))
+        let input = Tensor::from_array(([1usize, wave.len()], wave))
             .map_err(|e| format!("input tensor: {e}"))?;
 
         let outputs = session

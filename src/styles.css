@@ -334,8 +334,8 @@ body {
   font-weight: 400;
   color: var(--vp-muted);
 }
-/* Row whose control doesn't apply right now (e.g. language when the active
-   model is English-only). The control itself is also disabled in JS. */
+/* Row whose control doesn't apply right now. The control itself is also
+   disabled in JS. */
 .row.disabled {
   opacity: 0.55;
 }

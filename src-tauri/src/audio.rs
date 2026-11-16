@@ -366,11 +366,11 @@ pub fn run(app: AppHandle, rx: Receiver<SessionEvent>, capture: Arc<Capture>) {
                     continue;
                 }
 
-                // Pull the active model + language + paste behavior.
-                let (model, language, restore_clipboard) = {
+                // Pull the active model + paste behavior.
+                let (model, restore_clipboard) = {
                     let s = app.state::<SettingsState>();
                     let g = s.0.lock().unwrap();
-                    (g.model.clone(), g.language.clone(), g.restore_clipboard)
+                    (g.model.clone(), g.restore_clipboard)
                 };
 
                 let Some(model_id) = model else {
@@ -385,7 +385,7 @@ pub fn run(app: AppHandle, rx: Receiver<SessionEvent>, capture: Arc<Capture>) {
                 if !capture.is_open() {
                     let _ = app.emit("pill:state", "busy");
                 }
-                match transcriber.transcribe(&model_id, &language, &samples_16k) {
+                match transcriber.transcribe(&model_id, &samples_16k) {
                     Ok(text) => {
                         // Whisper output often has a leading space and no trailing
                         // one. Normalize: trim spaces, then add a single trailing
