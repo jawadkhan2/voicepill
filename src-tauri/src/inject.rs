@@ -106,27 +106,41 @@ fn clipboard_has_data() -> Option<bool> {
 /// Paste `text` into the focused field. When `restore_clipboard` is set, the
 /// user's previous supported clipboard contents are put back after the
 /// paste lands.
+///
+/// Never silently drops the text: if the clipboard is held by another app
+/// (clipboard managers, browsers and Office briefly lock it all the time) we
+/// retry, and if the current clipboard contents can't be snapshotted for
+/// restore we type the text directly instead of refusing to paste.
 pub fn paste_text(text: &str, restore_clipboard: bool) -> Result<(), String> {
     if text.is_empty() {
         return Ok(());
     }
 
-    let mut clipboard = Clipboard::new().map_err(|e| e.to_string())?;
+    let mut clipboard = retry(|| Clipboard::new().map_err(|e| e.to_string()))
+        .map_err(|e| format!("clipboard unavailable: {e}"))?;
     let previous = if restore_clipboard {
-        let snap = capture(&mut clipboard);
+        // `Unsupported` is usually a transient "clipboard is open in another
+        // process" rather than a truly exotic format, so re-check a few times.
+        let mut snap = capture(&mut clipboard);
+        for _ in 0..RETRIES {
+            if !matches!(snap, Snapshot::Unsupported) {
+                break;
+            }
+            std::thread::sleep(RETRY_DELAY);
+            snap = capture(&mut clipboard);
+        }
         if matches!(snap, Snapshot::Unsupported) {
-            return Err(
-                "clipboard contains data VoicePill cannot safely restore; disable Restore clipboard to overwrite it"
-                    .into(),
-            );
+            // Overwriting would destroy data we can't put back; refusing would
+            // lose the dictation. Type it instead — the clipboard is untouched.
+            crate::vlog!("[inject] clipboard not restorable; typing text instead of pasting");
+            return type_text(text);
         }
         Some(snap)
     } else {
         None
     };
 
-    clipboard
-        .set_text(text)
+    retry(|| clipboard.set_text(text).map_err(|e| e.to_string()))
         .map_err(|e| format!("clipboard set failed: {e}"))?;
     // Give the OS a moment to register the new clipboard owner before pasting.
     std::thread::sleep(Duration::from_millis(40));
@@ -134,19 +148,47 @@ pub fn paste_text(text: &str, restore_clipboard: bool) -> Result<(), String> {
     let mut enigo = Enigo::new(&Settings::default()).map_err(|e| e.to_string())?;
     let modifier = paste_modifier();
     enigo.key(modifier, Press).map_err(|e| e.to_string())?;
-    enigo
-        .key(Key::Unicode('v'), Click)
-        .map_err(|e| e.to_string())?;
+    let click = enigo.key(Key::Unicode('v'), Click).map_err(|e| e.to_string());
+    // Always release the modifier, even if the click failed, so Ctrl is never
+    // left logically held down.
     enigo.key(modifier, Release).map_err(|e| e.to_string())?;
+    click?;
 
     if let Some(prev) = previous {
         // Wait for the target app to actually read the clipboard before we
-        // overwrite it again, otherwise it may paste the restored contents.
-        std::thread::sleep(Duration::from_millis(120));
+        // overwrite it again, otherwise it pastes the *restored* contents.
+        // Electron apps and terminals under load can take well over 100 ms.
+        std::thread::sleep(RESTORE_DELAY);
         restore(&mut clipboard, prev);
     }
 
     Ok(())
+}
+
+const RETRIES: usize = 5;
+const RETRY_DELAY: Duration = Duration::from_millis(30);
+const RESTORE_DELAY: Duration = Duration::from_millis(250);
+
+/// Run a clipboard operation, retrying briefly while another process holds
+/// the clipboard open.
+fn retry<T>(mut op: impl FnMut() -> Result<T, String>) -> Result<T, String> {
+    let mut last = String::new();
+    for attempt in 0..=RETRIES {
+        match op() {
+            Ok(v) => return Ok(v),
+            Err(e) => last = e,
+        }
+        if attempt < RETRIES {
+            std::thread::sleep(RETRY_DELAY);
+        }
+    }
+    Err(last)
+}
+
+/// Fallback delivery: synthesize the text as Unicode keystrokes.
+fn type_text(text: &str) -> Result<(), String> {
+    let mut enigo = Enigo::new(&Settings::default()).map_err(|e| e.to_string())?;
+    enigo.text(text).map_err(|e| e.to_string())
 }
 
 #[cfg(target_os = "macos")]

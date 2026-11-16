@@ -50,6 +50,8 @@ function audioErrorLabel(error: AudioError): string {
   if (error.kind === "input_stream_lost") return "Mic lost";
   if (error.kind === "model_load_failed") return "Model load failed";
   if (error.kind === "no_model") return "Pick a model";
+  if (error.kind === "transcribe_failed") return "Transcribe failed";
+  if (error.kind === "paste_failed") return "Paste failed";
   return "Mic error";
 }
 

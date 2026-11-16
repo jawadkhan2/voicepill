@@ -1,6 +1,6 @@
 [package]
 name = "voicepill"
-version = "0.2.1"
+version = "0.2.2"
 description = "Local voice transcription pill"
 authors = ["VoicePill"]
 edition = "2021"
@@ -21,6 +21,10 @@ tauri-plugin-autostart = "2"
 # the new NSIS installer, verify its signature, install, and relaunch.
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
+# Exactly one VoicePill per user session. Two instances both catch the trigger,
+# both hold a model in VRAM and race each other on the clipboard — sentences
+# vanish. A second launch just focuses the running instance and exits.
+tauri-plugin-single-instance = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Global mouse/keyboard hook — needed for mouse side-buttons the Tauri
@@ -43,11 +47,13 @@ ort = { version = "=2.0.0-rc.10", default-features = false, features = ["std", "
 tokenizers = { version = "0.21", default-features = false, features = ["onig"] }
 # Zero-copy reads of the MedASR n-gram LM (medasr-lm.bin, ~450 MB on disk).
 memmap2 = "0.9"
+# Facade whisper-rs routes whisper.cpp/ggml logs through (see applog.rs).
+log = "0.4"
 
 [target.'cfg(windows)'.dependencies]
 # Local transcription on NVIDIA GPUs (whisper.cpp CUDA). CUDA targets are
 # configured in .cargo/config.toml so installers run across GPU generations.
-whisper-rs = { version = "0.16", features = ["cuda"] }
+whisper-rs = { version = "0.16", features = ["cuda", "log_backend"] }
 # Live GPU/VRAM stats via NVIDIA NVML (nvml.dll ships with the driver). Lets the
 # UI confirm the CUDA device and show how much VRAM the loaded model occupies.
 nvml-wrapper = "0.12"
@@ -71,11 +77,11 @@ windows = { version = "0.61", features = [
 # Transparent floating windows require Tauri's macOS private API feature.
 tauri = { version = "2", features = ["macos-private-api"] }
 # Native Apple Silicon transcription through whisper.cpp's Metal backend.
-whisper-rs = { version = "0.16", features = ["metal"] }
+whisper-rs = { version = "0.16", features = ["metal", "log_backend"] }
 
 [target.'cfg(not(any(windows, target_os = "macos")))'.dependencies]
 # Keeps non-primary desktop targets buildable with CPU Whisper.
-whisper-rs = "0.16"
+whisper-rs = { version = "0.16", features = ["log_backend"] }
 
 [profile.release]
 codegen-units = 1

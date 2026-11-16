@@ -28,7 +28,7 @@ fn nvml() -> Option<&'static Nvml> {
     NVML.get_or_init(|| match Nvml::init() {
         Ok(n) => Some(n),
         Err(e) => {
-            eprintln!("[gpu] NVML init failed (no GPU stats): {e}");
+            crate::vlog!("[gpu] NVML init failed (no GPU stats): {e}");
             None
         }
     })

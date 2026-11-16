@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex};
 use rdev::{listen, Button, EventType, Key};
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::audio::{self, SessionEvent};
+use crate::audio::{Capture, SessionEvent};
 use crate::settings::{SettingsState, TriggerBinding, TriggerKind, TriggerMode};
 
 /// Shared, thread-safe state for the input hook.
@@ -33,6 +33,10 @@ pub struct HookState {
     /// Drives the audio coordinator thread. Sending must stay non-blocking so the
     /// rdev callback never stalls (a slow global hook degrades system input).
     pub session_tx: Sender<SessionEvent>,
+    /// Capture gate + buffer, opened/closed right here on the input thread so
+    /// recording starts the instant the trigger goes down — even while the
+    /// coordinator is still busy transcribing the previous sentence.
+    pub capture: Arc<Capture>,
 }
 
 impl HookState {
@@ -40,6 +44,7 @@ impl HookState {
         binding: Option<TriggerBinding>,
         mode: TriggerMode,
         session_tx: Sender<SessionEvent>,
+        capture: Arc<Capture>,
     ) -> Self {
         HookState {
             binding: Mutex::new(binding),
@@ -48,6 +53,7 @@ impl HookState {
             recording: Arc::new(AtomicBool::new(false)),
             physically_down: AtomicBool::new(false),
             session_tx,
+            capture,
         }
     }
 }
@@ -58,7 +64,7 @@ pub fn spawn(app: AppHandle, state: Arc<HookState>) {
     std::thread::spawn(move || {
         let callback = move |event: rdev::Event| handle_event(&app, &state, event);
         if let Err(err) = listen(callback) {
-            eprintln!("[input_hook] rdev listen failed: {err:?}");
+            crate::vlog!("[input_hook] rdev listen failed: {err:?}");
         }
     });
 }
@@ -151,25 +157,21 @@ fn start_recording(app: &AppHandle, state: &Arc<HookState>) {
     // No model selected — don't start the listening animation. Nudge the user
     // to pick one instead. Without this the pill shows "listening" through a
     // whole recording on a fresh install, then silently drops it at transcribe.
-    let (has_model, device) = {
-        let state = app.state::<SettingsState>();
-        let settings = state.0.lock().unwrap();
-        (settings.model.is_some(), settings.audio_device.clone())
-    };
+    let has_model = app.state::<SettingsState>().0.lock().unwrap().model.is_some();
     if !has_model {
         let _ = app.emit("transcribe:no-model", ());
         return;
     }
 
-    if let Some(error) = audio::input_device_problem(device.as_deref()) {
-        audio::emit_audio_error(app, &error);
-        let _ = app.emit("pill:state", "error");
-        return;
-    }
-
+    // NOTE: no microphone enumeration here. This runs on the low-level input
+    // hook thread, and WASAPI device enumeration can take long enough that
+    // Windows' LowLevelHooksTimeout silently unhooks us (the trigger then just
+    // stops working). The coordinator validates the device on `Start` instead
+    // and reports problems through `audio:error`.
     if state.recording.swap(true, Ordering::SeqCst) {
         return; // already recording
     }
+    state.capture.begin();
     let _ = state.session_tx.send(SessionEvent::Start {
         recording: state.recording.clone(),
     });
@@ -181,7 +183,8 @@ fn stop_recording(app: &AppHandle, state: &Arc<HookState>) {
     if !state.recording.swap(false, Ordering::SeqCst) {
         return; // wasn't recording
     }
-    let _ = state.session_tx.send(SessionEvent::Stop);
+    let clip = state.capture.end();
+    let _ = state.session_tx.send(SessionEvent::Stop(clip));
     let _ = app.emit("trigger:stop", ());
     let _ = app.emit("pill:state", "idle");
 }

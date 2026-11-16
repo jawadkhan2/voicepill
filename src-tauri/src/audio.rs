@@ -10,7 +10,7 @@
 //! entirely on the coordinator thread (`run`). The rdev hook thread only sends
 //! lightweight `SessionEvent`s over a channel — it must never block.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex};
 
@@ -43,12 +43,76 @@ pub struct AudioErrorPayload {
     pub sticky: bool,
 }
 
+/// The shared capture gate + buffer.
+///
+/// The input hook thread opens and closes the gate *itself*, at the exact moment
+/// the trigger goes down/up, and takes the finished clip on release. Previously
+/// the gate was flipped by the coordinator thread when it got around to the
+/// `Start` event — but that thread is also the one running Whisper, so any
+/// speech that began while the previous sentence was still being transcribed
+/// (or while a model was loading, or while devices were being enumerated) was
+/// never recorded. The user saw "Listening…" and the sentence vanished.
+///
+/// All methods are lock-for-microseconds and never block on the coordinator, so
+/// they're safe to call from the low-level hook thread.
+pub struct Capture {
+    gate: AtomicBool,
+    buf: Mutex<Vec<f32>>,
+    /// Sample rate of the stream currently feeding `buf` (0 = none yet).
+    in_rate: AtomicU32,
+}
+
+impl Capture {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Capture {
+            gate: AtomicBool::new(false),
+            buf: Mutex::new(Vec::new()),
+            in_rate: AtomicU32::new(0),
+        })
+    }
+
+    /// Start a new clip: drop anything left over and open the gate.
+    pub fn begin(&self) {
+        self.buf.lock().unwrap().clear();
+        self.gate.store(true, Ordering::SeqCst);
+    }
+
+    /// Close the gate and take the finished clip (O(1) swap, no copy).
+    pub fn end(&self) -> Clip {
+        self.gate.store(false, Ordering::SeqCst);
+        let samples = std::mem::take(&mut *self.buf.lock().unwrap());
+        Clip {
+            samples,
+            in_rate: self.in_rate.load(Ordering::SeqCst),
+        }
+    }
+
+    /// Close the gate and discard the clip (recording failed to start).
+    pub fn abort(&self) {
+        self.gate.store(false, Ordering::SeqCst);
+        self.buf.lock().unwrap().clear();
+    }
+
+    pub fn is_open(&self) -> bool {
+        self.gate.load(Ordering::SeqCst)
+    }
+}
+
+/// A finished recording at the capture device's native rate.
+pub struct Clip {
+    pub samples: Vec<f32>,
+    pub in_rate: u32,
+}
+
 /// Sent from the input hook to the audio coordinator thread.
 pub enum SessionEvent {
+    /// Recording began (the hook already opened the capture gate). The
+    /// coordinator makes sure a capture stream exists for the chosen device.
     Start {
         recording: Arc<AtomicBool>,
     },
-    Stop,
+    /// Recording ended; the hook already took the clip.
+    Stop(Clip),
     /// Preload a model into VRAM (user clicked "Use"). Handled on this thread so
     /// the `!Send` CUDA context stays single-threaded; reports progress via
     /// `model:loading` / `model:loaded` / `model:load-error` events.
@@ -63,8 +127,6 @@ struct Active {
     /// call methods on it (the `capturing` flag gates recording instead).
     #[allow(dead_code)]
     stream: cpal::Stream,
-    buffer: Arc<Mutex<Vec<f32>>>,
-    in_rate: u32,
     /// The device name we built this stream for, so we can detect when the user
     /// switches input devices in settings and rebuild.
     requested_device: Option<String>,
@@ -86,23 +148,24 @@ pub fn list_input_devices() -> Vec<String> {
     }
 }
 
-pub fn input_device_problem(device_name: Option<&str>) -> Option<AudioErrorPayload> {
-    let host = cpal::default_host();
+/// Whether recording from `device_name` (or the default) can work, given an
+/// already-taken device snapshot. Pure, so one enumeration serves both this
+/// check and the stream-rebuild decision.
+fn input_device_problem_for(
+    device_name: Option<&str>,
+    available: &[String],
+    has_default: bool,
+) -> Option<AudioErrorPayload> {
     match device_name {
         Some(name) => {
-            let selected_available = host
-                .input_devices()
-                .ok()
-                .map(|mut devs| devs.any(|d| d.name().map(|n| n == name).unwrap_or(false)))
-                .unwrap_or(false);
-            if selected_available || host.default_input_device().is_some() {
+            if has_default || available.iter().any(|n| n == name) {
                 None
             } else {
                 Some(selected_input_unavailable_error(name))
             }
         }
         None => {
-            if host.default_input_device().is_some() {
+            if has_default {
                 None
             } else {
                 Some(no_input_device_error())
@@ -151,14 +214,11 @@ fn input_stream_error(message: impl Into<String>, detail: impl Into<String>) -> 
     audio_error("input_stream_failed", message, detail, false)
 }
 
-/// Coordinator loop: owns the cpal stream and turns Start/Stop into a captured,
-/// resampled 16 kHz mono buffer. Runs on its own thread for the lifetime of the app.
-pub fn run(app: AppHandle, rx: Receiver<SessionEvent>) {
+/// Coordinator loop: owns the cpal stream, makes sure it exists for the chosen
+/// device, and turns each finished clip into pasted text. Runs on its own thread
+/// for the lifetime of the app.
+pub fn run(app: AppHandle, rx: Receiver<SessionEvent>, capture: Arc<Capture>) {
     let mut active: Option<Active> = None;
-    // The capture stream runs continuously once opened; this flag tells its
-    // callback whether to actually record into the buffer. Stopping/starting the
-    // stream per session makes some USB mics play a sound, so we never do that.
-    let capturing = Arc::new(AtomicBool::new(false));
 
     // Lazily-loaded Whisper context lives here for the app's lifetime.
     let models_dir = app
@@ -167,6 +227,10 @@ pub fn run(app: AppHandle, rx: Receiver<SessionEvent>) {
         .map(|d| d.join("models"))
         .unwrap_or_else(|_| std::path::PathBuf::from("models"));
     let mut transcriber = Transcriber::new(models_dir);
+
+    // Pill state to show once background work finishes: if the user already
+    // started the next dictation, keep showing "Listening…", not "idle".
+    let settle_state = |capture: &Capture| if capture.is_open() { "listening" } else { "idle" };
 
     while let Ok(event) = rx.recv() {
         match event {
@@ -184,14 +248,19 @@ pub fn run(app: AppHandle, rx: Receiver<SessionEvent>) {
                 match transcriber.ensure_loaded(&id) {
                     Ok(()) => {
                         let ms = t0.elapsed().as_millis() as u64;
-                        println!("[transcribe] loaded '{id}' into VRAM in {ms}ms");
+                        let gpu = crate::gpu::info();
+                        crate::vlog!(
+                            "[transcribe] loaded '{id}' in {ms}ms (VRAM {}/{} MB used)",
+                            gpu.vram_used_mb,
+                            gpu.vram_total_mb
+                        );
                         let _ = app.emit(
                             "model:loaded",
-                            serde_json::json!({ "id": id, "ms": ms, "gpu": crate::gpu::info() }),
+                            serde_json::json!({ "id": id, "ms": ms, "gpu": gpu }),
                         );
                     }
                     Err(e) => {
-                        eprintln!("[transcribe] load '{id}' failed: {e}");
+                        crate::vlog!("[transcribe] load '{id}' failed: {e}");
                         let _ = app.emit(
                             "model:load-error",
                             serde_json::json!({ "id": id, "error": e }),
@@ -207,11 +276,19 @@ pub fn run(app: AppHandle, rx: Receiver<SessionEvent>) {
                     .unwrap()
                     .audio_device
                     .clone();
-                if let Some(error) = input_device_problem(device.as_deref()) {
-                    eprintln!("[audio] {}", error.message);
+                // One device enumeration serves both the availability check and
+                // the rebuild decision (WASAPI enumeration is not cheap). The
+                // existing stream is already recording meanwhile — the hook
+                // opened the gate before sending this event.
+                let available = list_input_devices();
+                let current_default = default_input_device_name();
+                if let Some(error) =
+                    input_device_problem_for(device.as_deref(), &available, current_default.is_some())
+                {
+                    crate::vlog!("[audio] {}", error.message);
                     emit_audio_error(&app, &error);
                     recording.store(false, Ordering::SeqCst);
-                    capturing.store(false, Ordering::SeqCst);
+                    capture.abort();
                     let _ = app.emit("trigger:stop", ());
                     let _ = app.emit("pill:state", "error");
                     continue;
@@ -220,46 +297,37 @@ pub fn run(app: AppHandle, rx: Receiver<SessionEvent>) {
                 // different input device. The stream then runs for the app's
                 // lifetime — we never stop it, so the mic never makes a sound.
                 let need_new = match &active {
-                    Some(a) => stream_needs_rebuild(a, &device),
+                    Some(a) => stream_needs_rebuild_for_names(
+                        &a.requested_device,
+                        &a.actual_device_name,
+                        a.using_fallback,
+                        a.stream_failed.load(Ordering::SeqCst),
+                        &device,
+                        &available,
+                        current_default.as_deref(),
+                    ),
                     None => true,
                 };
                 if need_new {
                     // Drop a dead/stale stream before opening the replacement so
                     // the OS can release the old endpoint cleanly.
-                    capturing.store(false, Ordering::SeqCst);
                     active = None;
-                    match start_stream(app.clone(), device, capturing.clone(), recording.clone()) {
+                    match start_stream(app.clone(), device, capture.clone(), recording.clone()) {
                         Ok(a) => active = Some(a),
                         Err(e) => {
-                            eprintln!("[audio] failed to start capture: {}", e.detail);
+                            crate::vlog!("[audio] failed to start capture: {}", e.detail);
                             emit_audio_error(&app, &e);
                             recording.store(false, Ordering::SeqCst);
-                            capturing.store(false, Ordering::SeqCst);
+                            capture.abort();
                             let _ = app.emit("trigger:stop", ());
                             let _ = app.emit("pill:state", "error");
                             continue;
                         }
                     }
                 }
-                if let Some(a) = active.as_ref() {
-                    a.buffer.lock().unwrap().clear();
-                    // Open the gate: the running callback now records into buffer.
-                    capturing.store(true, Ordering::SeqCst);
-                }
             }
-            SessionEvent::Stop => {
-                let Some(a) = active.as_ref() else { continue };
-                // Close the gate so the still-running callback discards audio.
-                // The stream keeps playing, so the device never sees capture stop.
-                capturing.store(false, Ordering::SeqCst);
-                let in_rate = a.in_rate;
-                let mono = {
-                    let mut b = a.buffer.lock().unwrap();
-                    let snapshot = b.clone();
-                    b.clear();
-                    snapshot
-                };
-
+            SessionEvent::Stop(clip) => {
+                let Clip { samples: mono, in_rate } = clip;
                 let dur = if in_rate > 0 {
                     mono.len() as f32 / in_rate as f32
                 } else {
@@ -268,36 +336,33 @@ pub fn run(app: AppHandle, rx: Receiver<SessionEvent>) {
                 let samples_16k = match resample_to_16k(&mono, in_rate) {
                     Ok(v) => v,
                     Err(e) => {
-                        eprintln!("[audio] resample failed: {e}");
+                        crate::vlog!("[audio] resample failed: {e}");
                         Vec::new()
                     }
                 };
-                println!(
-                    "[audio] captured {dur:.2}s @ {in_rate}Hz -> {} samples @16k",
-                    samples_16k.len()
-                );
+                drop(mono);
+
+                // Empty (resample failed / no capture) → nothing to do. Handle it
+                // once here so the speech gate and the no-model nudge below both
+                // run only on real audio.
+                if samples_16k.is_empty() {
+                    crate::vlog!("[audio] empty clip ({dur:.2}s @ {in_rate}Hz)");
+                    let _ = app.emit("pill:state", settle_state(&capture));
+                    continue;
+                }
 
                 // Speech gate: Whisper invents words ("you", "Thank you", ...)
                 // when handed silence or a sliver of audio, which is what made a
                 // quick toggle paste random text. Reject clips that are too short
                 // or too quiet to plausibly contain speech. The RMS floor is set
-                // low on purpose so whispers and quiet speech still pass; the
-                // model's own per-segment no-speech check (in transcribe) is the
-                // second line of defense for borderline cases.
-                // Empty (resample failed / no capture) → nothing to do. Handle it
-                // once here so the speech gate and the no-model nudge below both
-                // run only on real audio.
-                if samples_16k.is_empty() {
-                    let _ = app.emit("pill:state", "idle");
-                    continue;
-                }
+                // low on purpose so whispers and quiet speech still pass.
                 let secs = samples_16k.len() as f32 / TARGET_RATE as f32;
                 let rms = (samples_16k.iter().map(|s| s * s).sum::<f32>()
                     / samples_16k.len() as f32)
                     .sqrt();
                 if secs < MIN_SPEECH_SECONDS || rms < SPEECH_RMS_FLOOR {
-                    println!("[audio] skipped (no speech): {secs:.2}s rms={rms:.4}");
-                    let _ = app.emit("pill:state", "idle");
+                    crate::vlog!("[audio] skipped (no speech): {secs:.2}s rms={rms:.4}");
+                    let _ = app.emit("pill:state", settle_state(&capture));
                     continue;
                 }
 
@@ -311,20 +376,27 @@ pub fn run(app: AppHandle, rx: Receiver<SessionEvent>) {
                 let Some(model_id) = model else {
                     // No model selected yet — nudge the user to pick one.
                     let _ = app.emit("transcribe:no-model", ());
-                    let _ = app.emit("pill:state", "idle");
+                    let _ = app.emit("pill:state", settle_state(&capture));
                     continue;
                 };
 
-                let _ = app.emit("pill:state", "busy");
+                // Don't flip the pill to "Transcribing…" if the user is already
+                // dictating the next sentence — that one is still being recorded.
+                if !capture.is_open() {
+                    let _ = app.emit("pill:state", "busy");
+                }
                 match transcriber.transcribe(&model_id, &language, &samples_16k) {
                     Ok(text) => {
-                        println!("[transcribe] {text:?}");
                         // Whisper output often has a leading space and no trailing
                         // one. Normalize: trim spaces, then add a single trailing
                         // space so back-to-back dictations don't run together
                         // ("a.b" -> "a. b"). Newlines/tabs are kept — a lone
                         // "next line" dictation is exactly "\n" and must paste.
                         let text = text.trim_matches(' ');
+                        crate::vlog!(
+                            "[transcribe] {secs:.2}s rms={rms:.4} -> {} chars",
+                            text.chars().count()
+                        );
                         if !text.is_empty() {
                             let saved = {
                                 let h = app.state::<TranscriptHistoryState>();
@@ -336,7 +408,7 @@ pub fn run(app: AppHandle, rx: Receiver<SessionEvent>) {
                                     let _ = app.emit("transcript:new", &entry);
                                     let _ = app.emit_to("main", "transcript:new", &entry);
                                 }
-                                Err(e) => eprintln!("[transcript] failed to save history: {e}"),
+                                Err(e) => crate::vlog!("[transcript] failed to save history: {e}"),
                             }
                             // No trailing space after a commanded line break /
                             // tab — it would indent the next line.
@@ -345,17 +417,33 @@ pub fn run(app: AppHandle, rx: Receiver<SessionEvent>) {
                             } else {
                                 format!("{text} ")
                             };
-                            if let Err(e) = crate::inject::paste_text(&to_paste, restore_clipboard)
-                            {
-                                eprintln!("[inject] {e}");
+                            let pasted = crate::inject::paste_text(&to_paste, restore_clipboard);
+                            let _ = app.emit("pill:state", settle_state(&capture));
+                            if let Err(e) = pasted {
+                                // The text is safe in history; say so instead of
+                                // failing silently.
+                                crate::vlog!("[inject] {e}");
+                                emit_audio_error(
+                                    &app,
+                                    &audio_error(
+                                        "paste_failed",
+                                        "Paste failed",
+                                        format!("{e}. The text is in History."),
+                                        false,
+                                    ),
+                                );
                             }
+                        } else {
+                            let _ = app.emit("pill:state", settle_state(&capture));
                         }
-                        let _ = app.emit("pill:state", "idle");
                     }
                     Err(e) => {
-                        eprintln!("[transcribe] {e}");
-                        let _ = app.emit("transcribe:error", e);
-                        let _ = app.emit("pill:state", "error");
+                        crate::vlog!("[transcribe] {e}");
+                        let _ = app.emit("transcribe:error", &e);
+                        emit_audio_error(
+                            &app,
+                            &audio_error("transcribe_failed", "Transcription failed", e, false),
+                        );
                     }
                 }
             }
@@ -364,12 +452,12 @@ pub fn run(app: AppHandle, rx: Receiver<SessionEvent>) {
 }
 
 /// Open `device_name` (or the system default) and start a stream that records
-/// into a mono buffer whenever `capturing` is set. The stream runs continuously;
-/// the flag — not stopping the stream — is what gates a recording.
+/// into the shared capture buffer whenever its gate is open. The stream runs
+/// continuously; the gate — not stopping the stream — is what bounds a clip.
 fn start_stream(
     app: AppHandle,
     device_name: Option<String>,
-    capturing: Arc<AtomicBool>,
+    capture: Arc<Capture>,
     recording: Arc<AtomicBool>,
 ) -> Result<Active, AudioErrorPayload> {
     // Remember what was requested so the coordinator can detect device changes.
@@ -398,7 +486,7 @@ fn start_stream(
     };
     let actual_device_name = device.name().ok();
     if using_fallback {
-        eprintln!(
+        crate::vlog!(
             "[audio] requested input {:?} unavailable; using default input {:?}",
             requested, actual_device_name
         );
@@ -411,16 +499,18 @@ fn start_stream(
     let channels = config.channels() as usize;
     let sample_format = config.sample_format();
 
-    let buffer = Arc::new(Mutex::new(Vec::<f32>::new()));
-    let buf = buffer.clone();
     let stream_failed = Arc::new(AtomicBool::new(false));
     let failed = stream_failed.clone();
     let app_for_error = app.clone();
     let recording_for_error = recording.clone();
+    let capture_for_error = capture.clone();
     let err_fn = move |e: cpal::StreamError| {
-        eprintln!("[audio] stream error: {e}");
+        crate::vlog!("[audio] stream error: {e}");
         failed.store(true, Ordering::SeqCst);
+        // The hook won't send a Stop for this recording (we clear `recording`),
+        // so close the gate here too.
         recording_for_error.store(false, Ordering::SeqCst);
+        capture_for_error.abort();
         let error = audio_error(
             "input_stream_lost",
             "Microphone disconnected",
@@ -435,42 +525,42 @@ fn start_stream(
 
     let stream = match sample_format {
         cpal::SampleFormat::F32 => {
-            let cap = capturing.clone();
+            let cap = capture.clone();
             device.build_input_stream(
                 &cfg,
                 move |data: &[f32], _: &_| {
-                    if !cap.load(Ordering::Relaxed) {
+                    if !cap.gate.load(Ordering::Relaxed) {
                         return;
                     }
-                    push_mono(&buf, data, channels, |s| s);
+                    push_mono(&cap.buf, data, channels, |s| s);
                 },
                 err_fn,
                 None,
             )
         }
         cpal::SampleFormat::I16 => {
-            let cap = capturing.clone();
+            let cap = capture.clone();
             device.build_input_stream(
                 &cfg,
                 move |data: &[i16], _: &_| {
-                    if !cap.load(Ordering::Relaxed) {
+                    if !cap.gate.load(Ordering::Relaxed) {
                         return;
                     }
-                    push_mono(&buf, data, channels, |s| s as f32 / i16::MAX as f32);
+                    push_mono(&cap.buf, data, channels, |s| s as f32 / i16::MAX as f32);
                 },
                 err_fn,
                 None,
             )
         }
         cpal::SampleFormat::U16 => {
-            let cap = capturing.clone();
+            let cap = capture.clone();
             device.build_input_stream(
                 &cfg,
                 move |data: &[u16], _: &_| {
-                    if !cap.load(Ordering::Relaxed) {
+                    if !cap.gate.load(Ordering::Relaxed) {
                         return;
                     }
-                    push_mono(&buf, data, channels, |s| (s as f32 / u16::MAX as f32) * 2.0 - 1.0);
+                    push_mono(&cap.buf, data, channels, |s| (s as f32 / u16::MAX as f32) * 2.0 - 1.0);
                 },
                 err_fn,
                 None,
@@ -485,32 +575,24 @@ fn start_stream(
     }
     .map_err(|e| input_stream_error("Microphone could not start", e.to_string()))?;
 
+    // Anything already in the buffer came from the previous stream (possibly at
+    // another rate) — drop it so a clip never mixes two devices/rates.
+    capture.buf.lock().unwrap().clear();
+    capture.in_rate.store(in_rate, Ordering::SeqCst);
     stream
         .play()
         .map_err(|e| input_stream_error("Microphone could not start", e.to_string()))?;
+    crate::vlog!(
+        "[audio] capture stream open: {:?} @ {in_rate}Hz x{channels} {sample_format:?}",
+        actual_device_name
+    );
     Ok(Active {
         stream,
-        buffer,
-        in_rate,
         requested_device: requested,
         actual_device_name,
         using_fallback,
         stream_failed,
     })
-}
-
-fn stream_needs_rebuild(active: &Active, requested_device: &Option<String>) -> bool {
-    let available = list_input_devices();
-    let current_default = default_input_device_name();
-    stream_needs_rebuild_for_names(
-        &active.requested_device,
-        &active.actual_device_name,
-        active.using_fallback,
-        active.stream_failed.load(Ordering::SeqCst),
-        requested_device,
-        &available,
-        current_default.as_deref(),
-    )
 }
 
 fn default_input_device_name() -> Option<String> {
@@ -566,7 +648,7 @@ fn stream_needs_rebuild_for_names(
 /// i16/u16 paths convert in place instead of allocating a temporary `Vec<f32>`
 /// on every realtime capture callback.
 fn push_mono<T: Copy>(
-    buf: &Arc<Mutex<Vec<f32>>>,
+    buf: &Mutex<Vec<f32>>,
     data: &[T],
     channels: usize,
     conv: impl Fn(T) -> f32,
