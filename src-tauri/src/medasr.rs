@@ -98,7 +98,7 @@ impl MedAsrBackend {
             match LmModel::load(&lm_file) {
                 Ok(lm) => Some(lm),
                 Err(e) => {
-                    eprintln!("[medasr] LM load failed ({e}); falling back to greedy decode");
+                    crate::vlog!("[medasr] LM load failed ({e}); falling back to greedy decode");
                     None
                 }
             }

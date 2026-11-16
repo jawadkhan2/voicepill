@@ -179,6 +179,8 @@ pub fn delete(app: &AppHandle, id: &str) -> Result<(), String> {
         if path.exists() {
             std::fs::remove_file(&path).map_err(|e| e.to_string())?;
         }
+        // Also drop any half-finished download so it doesn't sit on disk.
+        let _ = std::fs::remove_file(path.with_extension("part"));
     }
     Ok(())
 }
@@ -198,7 +200,7 @@ pub fn download(app: &AppHandle, id: String) -> Result<(), String> {
         for (name, url) in &files {
             let dest = dir.join(name);
             if let Err(e) = run_download(&app, &id, url, &dir, &dest) {
-                eprintln!("[models] download '{id}' ({name}) failed: {e}");
+                crate::vlog!("[models] download '{id}' ({name}) failed: {e}");
                 let _ = app.emit("model:error", serde_json::json!({ "id": id, "error": e }));
                 return;
             }
@@ -242,8 +244,9 @@ fn run_download(
             }
             Err(e) => {
                 last_err = e;
-                eprintln!("[models] '{id}' attempt {attempt}/{MAX_ATTEMPTS} failed: {last_err}");
-                let _ = std::fs::remove_file(&tmp); // start the next attempt clean
+                crate::vlog!("[models] '{id}' attempt {attempt}/{MAX_ATTEMPTS} failed: {last_err}");
+                // Keep the .part: the next attempt (or a later click on
+                // Download) resumes from where this one stopped.
                 if attempt < MAX_ATTEMPTS {
                     std::thread::sleep(std::time::Duration::from_millis(500 * attempt as u64));
                 }
@@ -261,15 +264,40 @@ fn attempt_download(
     client: &reqwest::blocking::Client,
     tmp: &PathBuf,
 ) -> Result<u64, String> {
-    let mut resp = client.get(url).send().map_err(err_chain)?;
+    // Resume a previous partial download if there is one (HF and GitHub
+    // release assets both honour Range). A 200 reply means the server ignored
+    // the range, so start over.
+    let have = std::fs::metadata(tmp).map(|m| m.len()).unwrap_or(0);
+    let mut req = client.get(url);
+    if have > 0 {
+        req = req.header(reqwest::header::RANGE, format!("bytes={have}-"));
+    }
+    let mut resp = req.send().map_err(err_chain)?;
+    if resp.status() == reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
+        // Stale/oversized .part — discard and fetch fresh next attempt.
+        let _ = std::fs::remove_file(tmp);
+        return Err("partial download was invalid; restarting".into());
+    }
     if !resp.status().is_success() {
         return Err(format!("HTTP {}", resp.status()));
     }
-    let total = resp.content_length().unwrap_or(0);
+    let resuming = have > 0 && resp.status() == reqwest::StatusCode::PARTIAL_CONTENT;
+    let offset = if resuming { have } else { 0 };
+    let total = resp.content_length().map(|n| n + offset).unwrap_or(0);
 
-    let mut file = std::fs::File::create(tmp).map_err(|e| e.to_string())?;
+    let mut file = if resuming {
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(tmp)
+            .map_err(|e| e.to_string())?
+    } else {
+        std::fs::File::create(tmp).map_err(|e| e.to_string())?
+    };
+    if resuming {
+        crate::vlog!("[models] '{id}' resuming at {have} bytes");
+    }
     let mut buf = [0u8; 64 * 1024];
-    let mut received: u64 = 0;
+    let mut received: u64 = offset;
     let mut last_emit = 0u64;
     loop {
         let n = resp.read(&mut buf).map_err(err_chain)?;

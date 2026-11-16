@@ -129,8 +129,10 @@ fn run(app: AppHandle, state: Arc<HookState>) {
                 }
             }
             Err(e) => {
-                if debug {
-                    eprintln!("[hidpp] session error: {e}; retrying in 3s…");
+                // Only log link losses (not the "device not present" retries
+                // that repeat every 3 s), so the log shows reconnect history.
+                if debug || e.starts_with("read failed") {
+                    crate::vlog!("[hidpp] session error: {e}; retrying in 3s…");
                 }
             }
         }
@@ -183,11 +185,7 @@ fn try_session(app: &AppHandle, state: &Arc<HookState>, debug: bool) -> Result<(
     ];
     match unsafe { dev.call(reprog_idx, REPROG_FN_SET_CID_REPORTING, &params) } {
         Some(_) => {
-            if debug {
-                eprintln!(
-                    "[hidpp] diverted gesture control 0x{GESTURE_CID:04x}; listening for presses"
-                );
-            }
+            crate::vlog!("[hidpp] diverted gesture control 0x{GESTURE_CID:04x}; listening for presses");
         }
         None => {
             return Err(format!(
@@ -203,8 +201,15 @@ fn try_session(app: &AppHandle, state: &Arc<HookState>, debug: bool) -> Result<(
     loop {
         // u32::MAX = wait indefinitely; a `None` here means the handle died
         // (device slept/disconnected) → end the session to reconnect.
-        let report = unsafe { dev.read(u32::MAX) }
-            .ok_or_else(|| "read failed (device disconnected?)".to_string())?;
+        let Some(report) = (unsafe { dev.read(u32::MAX) }) else {
+            // The link dropped (mouse slept / reconnected). If a control was
+            // held at that moment its release will never arrive — synthesize
+            // it, or push-to-talk would stay stuck "recording" forever.
+            for &cid in &prev {
+                emit(app, state, debug, cid, false);
+            }
+            return Err("read failed (device disconnected?)".to_string());
+        };
         if report.len() < 12 || report[0] != REPORT_LONG {
             continue;
         }
@@ -401,8 +406,7 @@ impl Device {
             Ok(()) => {} // completed synchronously
             Err(e) if e.code() == ERROR_IO_PENDING.to_hresult() => {
                 if WaitForSingleObject(self.event, timeout_ms) != WAIT_OBJECT_0 {
-                    let _ = CancelIoEx(self.handle, Some(&ov));
-                    let _ = WaitForSingleObject(self.event, 100);
+                    cancel_and_drain(self.handle, &ov);
                     return None;
                 }
             }
@@ -431,8 +435,7 @@ impl Device {
             Ok(()) => {}
             Err(e) if e.code() == ERROR_IO_PENDING.to_hresult() => {
                 if WaitForSingleObject(self.event, CALL_TIMEOUT_MS) != WAIT_OBJECT_0 {
-                    let _ = CancelIoEx(self.handle, Some(&ov));
-                    let _ = WaitForSingleObject(self.event, 100);
+                    cancel_and_drain(self.handle, &ov);
                     return false;
                 }
             }
@@ -442,6 +445,22 @@ impl Device {
         let mut transferred: u32 = 0;
         GetOverlappedResult(self.handle, &ov, &mut transferred, false).is_ok()
     }
+}
+
+/// Cancel an in-flight overlapped operation and block until the kernel has
+/// actually finished with it.
+///
+/// The I/O buffer and the `OVERLAPPED` both live in the caller's frame and are
+/// freed as soon as it returns. The old code cancelled and then waited only
+/// 100 ms on the event; if the cancel hadn't completed by then, the HID driver
+/// later wrote the report / completion status into freed heap and stack memory
+/// — heap corruption that crashed the app (`0xc0000374` in ntdll). A blocking
+/// `GetOverlappedResult(.., bWait = TRUE)` returns only once the operation is
+/// done (completed or cancelled), so the memory is safe to release.
+unsafe fn cancel_and_drain(handle: HANDLE, ov: &OVERLAPPED) {
+    let _ = CancelIoEx(handle, Some(ov));
+    let mut transferred: u32 = 0;
+    let _ = GetOverlappedResult(handle, ov, &mut transferred, true);
 }
 
 impl Drop for Device {

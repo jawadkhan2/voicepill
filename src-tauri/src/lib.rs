@@ -1,3 +1,5 @@
+#[macro_use]
+mod applog;
 mod audio;
 mod commands;
 mod focus;
@@ -50,6 +52,19 @@ fn toggle_window(app: &tauri::AppHandle, label: &str) {
 
 pub fn run() {
     tauri::Builder::default()
+        // Must be registered first. Two VoicePills (autostart + a manual
+        // launch, or a relaunch racing an old process) both react to the
+        // trigger, both keep a model in VRAM, and fight over the clipboard while
+        // pasting — dictations get dropped or clobbered. A second launch now
+        // hands off to the running instance and exits immediately.
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            crate::vlog!("[app] second launch blocked (args: {args:?})");
+            // A login-autostart duplicate stays silent; a manual launch means
+            // the user is looking for the app, so bring the panel up.
+            if !args.iter().any(|a| a == "--minimized") {
+                show_window(app, "main");
+            }
+        }))
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
             Some(vec!["--minimized"]),
@@ -78,14 +93,17 @@ pub fn run() {
         ])
         .setup(|app| {
             let handle = app.handle().clone();
+            applog::init(&handle);
             let last_external_window = LastExternalWindow::new();
             focus::spawn(last_external_window.clone());
             app.manage(last_external_window);
 
             // ---- Audio coordinator thread (owns the !Send cpal stream) ------
             let (session_tx, session_rx) = channel::<audio::SessionEvent>();
+            let capture = audio::Capture::new();
             let audio_handle = handle.clone();
-            std::thread::spawn(move || audio::run(audio_handle, session_rx));
+            let audio_capture = capture.clone();
+            std::thread::spawn(move || audio::run(audio_handle, session_rx, audio_capture));
 
             // ---- Load settings + wire shared state ---------------------------
             let loaded = settings::load(&handle);
@@ -136,6 +154,7 @@ pub fn run() {
                 loaded.trigger.clone(),
                 loaded.trigger_mode,
                 session_tx,
+                capture,
             ));
             app.manage(TranscriptHistoryState(Mutex::new(loaded_history)));
             app.manage(hook.clone());
