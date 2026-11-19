@@ -98,7 +98,13 @@ impl ParakeetBackend {
         self.loaded.as_ref().map(|l| l.id == id).unwrap_or(false)
     }
 
-    /// Release the sessions (and their VRAM), e.g. when switching to Whisper.
+    /// Id of the model currently on the GPU, if any.
+    pub fn loaded_id(&self) -> Option<&str> {
+        self.loaded.as_ref().map(|l| l.id.as_str())
+    }
+
+    /// Release the sessions (and their VRAM), e.g. when switching to Whisper
+    /// or after the app has sat idle.
     pub fn unload(&mut self) {
         self.loaded = None;
     }

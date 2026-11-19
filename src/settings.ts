@@ -190,6 +190,21 @@ listen<{ id: string; ms: number; gpu: GpuInfo }>("model:loaded", (e) => {
   render();
 });
 
+// Freed from VRAM after sitting idle; it reloads when the next dictation starts.
+listen<{ id: string; gpu: GpuInfo }>("model:unloaded", (e) => {
+  loadStatus.set(e.payload.id, "Idle: GPU memory freed");
+  if (e.payload.gpu) gpu = e.payload.gpu;
+  render();
+});
+
+// Reloaded on record start after an idle unload (no toast: the user is talking).
+listen<{ id: string; ms: number; gpu: GpuInfo }>("model:reloaded", (e) => {
+  loadErrors.delete(e.payload.id);
+  loadStatus.set(e.payload.id, `Reloaded in ${(e.payload.ms / 1000).toFixed(1)}s`);
+  if (e.payload.gpu) gpu = e.payload.gpu;
+  render();
+});
+
 listen<{ id: string; error: string }>("model:load-error", (e) => {
   loadingModels.delete(e.payload.id);
   loadErrors.set(e.payload.id, e.payload.error);

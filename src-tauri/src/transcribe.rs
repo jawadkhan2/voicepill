@@ -61,6 +61,25 @@ impl Transcriber {
         }
     }
 
+    /// Id of the model a GPU engine (Whisper or Parakeet) holds in VRAM, if any.
+    /// MedASR runs on the CPU and is not counted.
+    pub fn gpu_model_id(&self) -> Option<&str> {
+        self.loaded
+            .as_ref()
+            .map(|l| l.id.as_str())
+            .or_else(|| self.parakeet.loaded_id())
+    }
+
+    /// Free every GPU-resident model and return the id that was unloaded. Used
+    /// after the app has sat idle, so VoicePill doesn't hold gigabytes of VRAM
+    /// while a game or other GPU app needs it. The next dictation reloads it.
+    pub fn unload_gpu(&mut self) -> Option<String> {
+        let id = self.gpu_model_id().map(str::to_string);
+        self.loaded = None;
+        self.parakeet.unload();
+        id
+    }
+
     /// Ensure the model for `id` is loaded (reloading if the model changed).
     /// `pub` so the audio coordinator can preload a model on demand (when the
     /// user clicks "Use") rather than lazily on first transcription.
@@ -307,6 +326,50 @@ mod tests {
             println!("NEW run {run} ({} ms): {text:?}", t0.elapsed().as_millis());
             assert!(!text.is_empty());
         }
+    }
+
+    /// Headless GPU check that an idle unload really gives VRAM back, and how
+    /// long the reload takes:
+    /// `VOICEPILL_TEST_MODEL=large-v3 cargo test --release --lib
+    ///  idle_unload_frees_vram -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn idle_unload_frees_vram() {
+        let model = std::env::var("VOICEPILL_TEST_MODEL").unwrap_or_else(|_| "large-v3".into());
+        let dir = std::path::PathBuf::from(std::env::var("APPDATA").unwrap())
+            .join("com.voicepill.app")
+            .join("models");
+        let used = || crate::gpu::info().vram_used_mb;
+        let mut t = super::Transcriber::new(dir);
+
+        let before = used();
+        let t0 = std::time::Instant::now();
+        t.ensure_loaded(&model).unwrap();
+        let cold_ms = t0.elapsed().as_millis();
+        let loaded = used();
+        assert_eq!(t.gpu_model_id(), Some(model.as_str()));
+
+        assert_eq!(t.unload_gpu().as_deref(), Some(model.as_str()));
+        assert_eq!(t.gpu_model_id(), None);
+        // The driver can take a moment to report freed memory.
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        let unloaded = used();
+
+        let t1 = std::time::Instant::now();
+        t.ensure_loaded(&model).unwrap();
+        let reload_ms = t1.elapsed().as_millis();
+        let reloaded = used();
+
+        println!(
+            "{model}: VRAM before {before} MB, loaded {loaded} MB, after unload {unloaded} MB, \
+             reloaded {reloaded} MB; cold load {cold_ms} ms, reload {reload_ms} ms"
+        );
+        let held = loaded.saturating_sub(before);
+        let freed = loaded.saturating_sub(unloaded);
+        assert!(
+            freed * 10 >= held * 7,
+            "unload freed only {freed} of {held} MB"
+        );
     }
 
     #[test]

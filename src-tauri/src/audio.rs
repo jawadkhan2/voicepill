@@ -11,7 +11,8 @@
 //! lightweight `SessionEvent`s over a channel — it must never block.
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::mpsc::Receiver;
+use std::sync::mpsc::{Receiver, RecvTimeoutError};
+use std::time::{Duration, Instant};
 use std::sync::{Arc, Mutex};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -34,6 +35,13 @@ const TARGET_RATE: u32 = 16_000;
 /// slips through, raise it.
 const MIN_SPEECH_SECONDS: f32 = 0.3;
 const SPEECH_RMS_FLOOR: f32 = 0.0025; // ≈ -52 dBFS
+
+/// Free the GPU model after this long without any dictation. A resident model
+/// holds 2–4 GB of VRAM; on a shared 16 GB card that pushes games into
+/// overcommit, where Windows starts evicting and DWM's VRAM balloons. The next
+/// dictation reloads it, starting the moment recording begins so the 1.5–4 s
+/// load overlaps with the user speaking.
+const IDLE_UNLOAD: Duration = Duration::from_secs(5 * 60);
 
 #[derive(Clone, Debug, Serialize)]
 pub struct AudioErrorPayload {
@@ -214,6 +222,35 @@ fn input_stream_error(message: impl Into<String>, detail: impl Into<String>) -> 
     audio_error("input_stream_failed", message, detail, false)
 }
 
+/// Load the selected model if it isn't resident (freed after `IDLE_UNLOAD`, or
+/// never loaded). Called when a recording starts. Failures are only logged:
+/// transcription retries the load on Stop and reports the error there.
+fn reload_selected_model(app: &AppHandle, transcriber: &mut Transcriber) {
+    let model = app.state::<SettingsState>().0.lock().unwrap().model.clone();
+    let Some(id) = model else { return };
+    if transcriber.is_loaded(&id) {
+        return;
+    }
+    let t0 = Instant::now();
+    match transcriber.ensure_loaded(&id) {
+        Ok(()) => {
+            let ms = t0.elapsed().as_millis() as u64;
+            let gpu = crate::gpu::info();
+            crate::vlog!(
+                "[transcribe] reloaded '{id}' on record start in {ms}ms (VRAM {}/{} MB used)",
+                gpu.vram_used_mb,
+                gpu.vram_total_mb
+            );
+            // Not `model:loaded`: the pill would flip to idle mid-recording.
+            let _ = app.emit(
+                "model:reloaded",
+                serde_json::json!({ "id": id, "ms": ms, "gpu": gpu }),
+            );
+        }
+        Err(e) => crate::vlog!("[transcribe] reload '{id}' on record start failed: {e}"),
+    }
+}
+
 /// Coordinator loop: owns the cpal stream, makes sure it exists for the chosen
 /// device, and turns each finished clip into pasted text. Runs on its own thread
 /// for the lifetime of the app.
@@ -232,7 +269,40 @@ pub fn run(app: AppHandle, rx: Receiver<SessionEvent>, capture: Arc<Capture>) {
     // started the next dictation, keep showing "Listening…", not "idle".
     let settle_state = |capture: &Capture| if capture.is_open() { "listening" } else { "idle" };
 
-    while let Ok(event) = rx.recv() {
+    loop {
+        // While a GPU model is resident, wake after IDLE_UNLOAD with no events
+        // and free its VRAM. Otherwise just block until the next event.
+        let event = if transcriber.gpu_model_id().is_some() {
+            match rx.recv_timeout(IDLE_UNLOAD) {
+                Ok(event) => event,
+                Err(RecvTimeoutError::Timeout) => {
+                    // A (very long) recording is still running: keep the model.
+                    if capture.is_open() {
+                        continue;
+                    }
+                    if let Some(id) = transcriber.unload_gpu() {
+                        let gpu = crate::gpu::info();
+                        crate::vlog!(
+                            "[transcribe] idle {}s: unloaded '{id}' (VRAM {}/{} MB used)",
+                            IDLE_UNLOAD.as_secs(),
+                            gpu.vram_used_mb,
+                            gpu.vram_total_mb
+                        );
+                        let _ = app.emit(
+                            "model:unloaded",
+                            serde_json::json!({ "id": id, "gpu": gpu }),
+                        );
+                    }
+                    continue;
+                }
+                Err(RecvTimeoutError::Disconnected) => break,
+            }
+        } else {
+            match rx.recv() {
+                Ok(event) => event,
+                Err(_) => break,
+            }
+        };
         match event {
             SessionEvent::Load(id) => {
                 if transcriber.is_loaded(&id) {
@@ -325,6 +395,10 @@ pub fn run(app: AppHandle, rx: Receiver<SessionEvent>, capture: Arc<Capture>) {
                         }
                     }
                 }
+                // The capture is running; if the model was freed while idle,
+                // load it now so it overlaps with the user speaking instead of
+                // delaying the transcript after they stop.
+                reload_selected_model(&app, &mut transcriber);
             }
             SessionEvent::Stop(clip) => {
                 let Clip { samples: mono, in_rate } = clip;
