@@ -9,6 +9,8 @@ mod hidpp;
 mod history;
 mod inject;
 mod input_hook;
+#[cfg(windows)]
+mod mouse_hook;
 mod medasr;
 mod medasr_lm;
 mod models;
@@ -156,6 +158,7 @@ pub fn run() {
             let hook = Arc::new(HookState::new(
                 loaded.trigger.clone(),
                 loaded.trigger_mode,
+                loaded.hold_threshold_ms,
                 session_tx,
                 capture,
             ));
@@ -164,6 +167,12 @@ pub fn run() {
 
             // ---- Global input hook (rdev) on its own thread -----------------
             input_hook::spawn(handle.clone(), hook.clone());
+
+            // ---- Suppressing mouse hook (Windows) ---------------------------
+            // Owns mouse buttons on Windows so the bound button can be hidden
+            // from every other app (rdev can only observe, never block).
+            #[cfg(windows)]
+            mouse_hook::spawn(handle.clone(), hook.clone());
 
             // ---- Logitech HID++ listener on its own thread ------------------
             // The MX Master 3 gesture button emits no HID report on a bare mouse;

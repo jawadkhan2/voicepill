@@ -22,7 +22,7 @@ const SECTION_ICONS: Record<string, string> = {
 
 // ---- Types mirroring the Rust `Settings` struct --------------------------
 type TriggerKind = "mouse" | "key";
-type TriggerMode = "push_to_talk" | "toggle";
+type TriggerMode = "push_to_talk" | "toggle" | "tap_hold";
 
 interface TriggerBinding {
   kind: TriggerKind;
@@ -33,6 +33,7 @@ interface TriggerBinding {
 interface Settings {
   trigger: TriggerBinding | null;
   trigger_mode: TriggerMode;
+  hold_threshold_ms: number;
   model: string | null;
   audio_device: string | null;
   autostart: boolean;
@@ -433,22 +434,37 @@ function triggerSection(): HTMLElement {
   const modeHint = (m: TriggerMode) =>
     m === "push_to_talk"
       ? "Hold to record, release to transcribe"
-      : "Click to start, click again to stop";
+      : m === "toggle"
+        ? "Click to start, click again to stop"
+        : "Tap does the button's normal action, hold to record";
   const modeSeg = segControl<TriggerMode>(
     [
       ["push_to_talk", "Push to talk"],
       ["toggle", "Toggle"],
+      ["tap_hold", "Tap or hold"],
     ],
     settings.trigger_mode,
     async (val) => {
       settings.trigger_mode = val;
       const hint = modeRow.querySelector(".row-hint");
       if (hint) hint.textContent = modeHint(val);
+      holdRow.style.display = val === "tap_hold" ? "" : "none";
       await persist();
     },
   );
   const modeRow = row("Mode", modeSeg, modeHint(settings.trigger_mode));
   s.appendChild(modeRow);
+
+  // Tap-or-hold threshold — only meaningful in that mode.
+  const holdRow = row(
+    "Hold time",
+    slider(settings.hold_threshold_ms ?? 250, 150, 600, 25, (v) => `${Math.round(v)} ms`, (v) => {
+      settings.hold_threshold_ms = Math.round(v);
+    }),
+    "Hold longer than this to dictate; shorter presses count as taps",
+  );
+  holdRow.style.display = settings.trigger_mode === "tap_hold" ? "" : "none";
+  s.appendChild(holdRow);
 
   return s;
 }

@@ -75,6 +75,7 @@ pub fn update_settings(
     // Keep the input hook's view of the binding/mode current.
     *hook.binding.lock().unwrap() = settings.trigger.clone();
     *hook.mode.lock().unwrap() = settings.trigger_mode;
+    hook.hold_ms.store(settings.hold_threshold_ms, Ordering::SeqCst);
 
     // Let other windows (the pill) re-apply appearance — theme, accent, pill
     // size/opacity/compact — without polling.

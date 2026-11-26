@@ -18,6 +18,9 @@ pub enum TriggerMode {
     PushToTalk,
     /// First press starts recording, second press stops.
     Toggle,
+    /// A quick tap passes the button's normal action through (e.g. browser
+    /// Forward); holding past `hold_threshold_ms` records until release.
+    TapHold,
 }
 
 impl Default for TriggerMode {
@@ -79,6 +82,10 @@ pub struct Settings {
     pub trigger: Option<TriggerBinding>,
     #[serde(default)]
     pub trigger_mode: TriggerMode,
+    /// Tap-or-hold mode: how long (ms) the trigger must be held before it counts
+    /// as a hold and starts dictation. Shorter presses are replayed as taps.
+    #[serde(default = "default_hold_threshold_ms")]
+    pub hold_threshold_ms: u32,
     /// Selected Whisper model id (filename stem), e.g. `"ggml-base.en"`.
     #[serde(default)]
     pub model: Option<String>,
@@ -122,6 +129,10 @@ fn default_true() -> bool {
     true
 }
 
+pub fn default_hold_threshold_ms() -> u32 {
+    250
+}
+
 fn default_accent() -> String {
     "#6c5ce7".to_string()
 }
@@ -139,6 +150,7 @@ impl Default for Settings {
         Settings {
             trigger: None,
             trigger_mode: TriggerMode::default(),
+            hold_threshold_ms: default_hold_threshold_ms(),
             model: None,
             audio_device: None,
             autostart: false,
@@ -196,7 +208,8 @@ mod tests {
                 code: "Unknown(1)".into(),
                 label: "Mouse 4".into(),
             }),
-            trigger_mode: TriggerMode::Toggle,
+            trigger_mode: TriggerMode::TapHold,
+            hold_threshold_ms: 300,
             model: Some("ggml-base.en".into()),
             audio_device: None,
             autostart: true,
@@ -218,6 +231,7 @@ mod tests {
         let back: Settings = serde_json::from_str(&txt).unwrap();
         assert_eq!(back.trigger, s.trigger);
         assert_eq!(back.trigger_mode, s.trigger_mode);
+        assert_eq!(back.hold_threshold_ms, 300);
         assert_eq!(back.model, s.model);
         assert_eq!(back.restore_clipboard, s.restore_clipboard);
         assert_eq!(back.theme, s.theme);
@@ -232,6 +246,7 @@ mod tests {
         let back: Settings = serde_json::from_str("{}").unwrap();
         assert!(back.trigger.is_none());
         assert_eq!(back.trigger_mode, TriggerMode::PushToTalk);
+        assert_eq!(back.hold_threshold_ms, 250);
         assert!(back.restore_clipboard);
         assert_eq!(back.theme, Theme::System);
         assert_eq!(back.accent, "#6c5ce7");

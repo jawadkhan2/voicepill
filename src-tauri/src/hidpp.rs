@@ -249,7 +249,7 @@ fn emit(app: &AppHandle, state: &Arc<HookState>, debug: bool, cid: u16, pressed:
         );
     }
     let (code, label) = encode(cid);
-    crate::input_hook::dispatch(app, state, TriggerKind::Mouse, code, label, pressed);
+    crate::input_hook::dispatch(app, state, TriggerKind::Mouse, code, label, pressed, None);
 }
 
 /// Stable matching `code` + friendly `label` for a diverted HID++ control.
