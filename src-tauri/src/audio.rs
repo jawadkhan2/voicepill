@@ -68,6 +68,9 @@ pub struct Capture {
     buf: Mutex<Vec<f32>>,
     /// Sample rate of the stream currently feeding `buf` (0 = none yet).
     in_rate: AtomicU32,
+    /// When the gate opened, so a clip that comes back empty can be told apart
+    /// from an instant tap (see the dead-mic check in `run`).
+    opened_at: Mutex<Option<Instant>>,
 }
 
 impl Capture {
@@ -76,12 +79,14 @@ impl Capture {
             gate: AtomicBool::new(false),
             buf: Mutex::new(Vec::new()),
             in_rate: AtomicU32::new(0),
+            opened_at: Mutex::new(None),
         })
     }
 
     /// Start a new clip: drop anything left over and open the gate.
     pub fn begin(&self) {
         self.buf.lock().unwrap().clear();
+        *self.opened_at.lock().unwrap() = Some(Instant::now());
         self.gate.store(true, Ordering::SeqCst);
     }
 
@@ -89,9 +94,17 @@ impl Capture {
     pub fn end(&self) -> Clip {
         self.gate.store(false, Ordering::SeqCst);
         let samples = std::mem::take(&mut *self.buf.lock().unwrap());
+        let held = self
+            .opened_at
+            .lock()
+            .unwrap()
+            .take()
+            .map(|t| t.elapsed())
+            .unwrap_or_default();
         Clip {
             samples,
             in_rate: self.in_rate.load(Ordering::SeqCst),
+            held,
         }
     }
 
@@ -110,7 +123,14 @@ impl Capture {
 pub struct Clip {
     pub samples: Vec<f32>,
     pub in_rate: u32,
+    /// How long the trigger was held.
+    pub held: Duration,
 }
+
+/// A press at least this long that yields zero samples means the input device
+/// opened but delivers no audio (e.g. Windows switched the default recording
+/// device to a game controller's headset jack with nothing plugged in).
+const DEAD_MIC_MIN_HOLD: Duration = Duration::from_millis(600);
 
 /// Sent from the input hook to the audio coordinator thread.
 pub enum SessionEvent {
@@ -401,7 +421,8 @@ pub fn run(app: AppHandle, rx: Receiver<SessionEvent>, capture: Arc<Capture>) {
                 reload_selected_model(&app, &mut transcriber);
             }
             SessionEvent::Stop(clip) => {
-                let Clip { samples: mono, in_rate } = clip;
+                let Clip { samples: mono, in_rate, held } = clip;
+                let mic_delivered_nothing = mono.is_empty() && held >= DEAD_MIC_MIN_HOLD;
                 let dur = if in_rate > 0 {
                     mono.len() as f32 / in_rate as f32
                 } else {
@@ -420,7 +441,33 @@ pub fn run(app: AppHandle, rx: Receiver<SessionEvent>, capture: Arc<Capture>) {
                 // once here so the speech gate and the no-model nudge below both
                 // run only on real audio.
                 if samples_16k.is_empty() {
-                    crate::vlog!("[audio] empty clip ({dur:.2}s @ {in_rate}Hz)");
+                    crate::vlog!(
+                        "[audio] empty clip ({dur:.2}s @ {in_rate}Hz, held {:.2}s)",
+                        held.as_secs_f32()
+                    );
+                    if mic_delivered_nothing {
+                        // Don't drop the sentence silently: say which mic is
+                        // dead, and reopen the stream on the next press (the
+                        // system default may have moved back, or the user picks
+                        // another mic in Settings).
+                        let name = active
+                            .as_ref()
+                            .and_then(|a| a.actual_device_name.clone())
+                            .unwrap_or_else(|| "The microphone".to_string());
+                        if let Some(a) = &active {
+                            a.stream_failed.store(true, Ordering::SeqCst);
+                        }
+                        let error = input_stream_error(
+                            "Microphone sent no audio",
+                            format!(
+                                "\"{name}\" recorded nothing. Choose another microphone in Settings."
+                            ),
+                        );
+                        crate::vlog!("[audio] {}: {}", error.message, error.detail);
+                        emit_audio_error(&app, &error);
+                        let _ = app.emit("pill:state", "error");
+                        continue;
+                    }
                     let _ = app.emit("pill:state", settle_state(&capture));
                     continue;
                 }

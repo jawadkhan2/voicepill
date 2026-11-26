@@ -9,6 +9,7 @@ mod hidpp;
 mod history;
 mod inject;
 mod input_hook;
+mod instance_guard;
 #[cfg(windows)]
 mod mouse_hook;
 mod medasr;
@@ -56,6 +57,11 @@ fn toggle_window(app: &tauri::AppHandle, label: &str) {
 }
 
 pub fn run() {
+    // Before anything else (no windows, no hooks, no model load): a second
+    // VoicePill hands off to the running one and exits here. See
+    // instance_guard.rs for why the plugin below isn't enough on its own.
+    instance_guard::acquire_or_exit();
+
     tauri::Builder::default()
         // Must be registered first. Two VoicePills (autostart + a manual
         // launch, or a relaunch racing an old process) both react to the
