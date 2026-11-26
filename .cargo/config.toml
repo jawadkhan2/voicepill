@@ -1,0 +1,16 @@
+# BUILD GUARD — compilation in this repo is disabled unless the user sets
+# VOICEPILL_ALLOW_BUILD=1 for that one command. See tools/build-guard/main.rs.
+#
+# Cargo reads config from the current directory upward, so this file also
+# applies when cargo runs inside src-tauri/ (tauri dev/build, rust-analyzer).
+# Relative paths here resolve against the repo root.
+#
+# Layer 1: every rustc call goes through the guard.
+[build]
+rustc-wrapper = "tools/build-guard/build-guard.exe"
+
+# Layer 2: rust-analyzer overrides layer 1 with its own RUSTC_WRAPPER env var,
+# so whisper.cpp's CMake/nvcc step (the part that pins the CPU) is guarded
+# separately — the cmake crate runs $CMAKE instead of `cmake`.
+[env]
+CMAKE = { value = "tools/build-guard/cmake-guard.exe", relative = true, force = true }

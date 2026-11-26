@@ -5,6 +5,9 @@ dist
 
 # Rust / Tauri
 src-tauri/target
+# Build guard binaries (built from tools/build-guard/main.rs with plain rustc)
+tools/build-guard/*.exe
+tools/build-guard/*.pdb
 src-tauri/gen/schemas
 
 # Models (downloaded at runtime, can be large)

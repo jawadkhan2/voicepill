@@ -1,0 +1,7 @@
+# rust-analyzer must never compile this project on its own: whisper-rs-sys's
+# build script builds whisper.cpp with CUDA (minutes of 100% CPU). Without build
+# scripts and proc macros, analysis still works for navigation/completion.
+# Compilation is also hard-blocked by tools/build-guard (see ../.cargo/config.toml).
+cargo.buildScripts.enable = false
+procMacro.enable = false
+checkOnSave = false

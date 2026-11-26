@@ -139,9 +139,18 @@ try {
     Pop-Location
   }
 
+  # Running this script by hand is the user's explicit go-ahead to compile;
+  # the build guard (tools/build-guard) blocks every other build. Scoped to
+  # this build only.
+  # The release rebuilds whisper.cpp/CUDA (cleaned above), which needs its own
+  # opt-in on top of VOICEPILL_ALLOW_BUILD.
+  $env:VOICEPILL_ALLOW_BUILD = "1"
+  $env:VOICEPILL_ALLOW_CUDA_BUILD = "1"
   npm run tauri build
   if ($LASTEXITCODE -ne 0) { throw "tauri build failed (exit $LASTEXITCODE)" }
 } finally {
+  Remove-Item Env:VOICEPILL_ALLOW_BUILD -ErrorAction SilentlyContinue
+  Remove-Item Env:VOICEPILL_ALLOW_CUDA_BUILD -ErrorAction SilentlyContinue
   Pop-Location
 }
 
